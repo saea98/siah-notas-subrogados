@@ -1,0 +1,19 @@
+{
+  "name": "@siah/notas-subrogados-widget",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Widget Vue Atención médica / notas Subrogados (agenda, asignar, consulta SOAP, signos)",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0",
+    "@nuxt/ui": "^4.0.0"
+  },
+  "files": ["src"],
+  "keywords": ["siah", "subrogados", "atmed", "notas", "vue", "widget"]
+}
