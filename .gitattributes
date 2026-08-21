@@ -1,0 +1,5 @@
+# Windows: evita CRLF en scripts/SQL (rompe shebang / set -e en Git Bash/WSL).
+*.sh text eol=lf
+*.bash text eol=lf
+*.sql text eol=lf
+.env* text eol=lf
