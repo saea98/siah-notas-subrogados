@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import RecetaSection from "./sections/RecetaSection.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -8,8 +9,13 @@ const props = withDefaults(
     /** Prefijo opcional de rutas (proxy Laravel) */
     apiPrefix?: string;
     session: { usuario: string; password: string; unitrab: string };
+    readOnly?: boolean;
+    capabilities?: { canEditNote?: boolean; canCaptureVitals?: boolean; canAssignAppointment?: boolean; canPrescribe?: boolean };
+    fetchFn?: typeof fetch;
+    initialTab?: "agenda" | "asignar" | "consulta" | "signos" | "receta";
+    visibleTabs?: ("agenda" | "asignar" | "consulta" | "signos" | "receta")[];
   }>(),
-  { apiPrefix: "" },
+  { apiPrefix: "", readOnly: false, capabilities: () => ({}), initialTab: "agenda", visibleTabs: () => ["agenda", "asignar", "consulta", "signos", "receta"] },
 );
 
 const emit = defineEmits<{
@@ -21,7 +27,15 @@ const error = ref("");
 const okMsg = ref("");
 const rows = ref<Record<string, unknown>[]>([]);
 const fecha = ref(new Date().toISOString().slice(0, 10));
-const tab = ref<"agenda" | "asignar" | "consulta" | "signos">("agenda");
+const tab = ref<"agenda" | "asignar" | "consulta" | "signos" | "receta">(props.initialTab);
+const tabs = computed(() => [
+  { id: "agenda", label: "Agenda" }, { id: "asignar", label: "Asignar cita" },
+  { id: "consulta", label: "Consulta" }, { id: "signos", label: "Signos" }, { id: "receta", label: "Receta" },
+].filter((item) => props.visibleTabs.includes(item.id as typeof tab.value)));
+const canAssign = computed(() => !props.readOnly && props.capabilities.canAssignAppointment !== false);
+const canEditNote = computed(() => !props.readOnly && props.capabilities.canEditNote !== false);
+const canCaptureVitals = computed(() => !props.readOnly && props.capabilities.canCaptureVitals !== false);
+const canPrescribe = computed(() => !props.readOnly && props.capabilities.canPrescribe !== false);
 
 const especialidades = ref<{ esps_espserv: number; espc_descrip: string }[]>([]);
 const medicos = ref<{ medc_ficha: string; medc_codigo: string; medc_nombre: string; esps_espserv: number }[]>([]);
@@ -77,13 +91,26 @@ const prefix = computed(() => {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const base = props.apiBase.replace(/\/+$/, "");
   const url = `${base}${prefix.value}${path.startsWith("/") ? path : `/${path}`}`;
-  const res = await fetch(url, {
+  const res = await (props.fetchFn ?? fetch)(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data));
+  if (!res.ok) {
+    const validation = data?.errors && typeof data.errors === "object"
+      ? Object.values(data.errors).flat().find((item) => typeof item === "string")
+      : null;
+    throw new Error(
+      typeof data.detail === "string"
+        ? data.detail
+        : typeof data.message === "string"
+          ? data.message
+          : typeof validation === "string"
+            ? validation
+            : "No fue posible completar la operación.",
+    );
+  }
   return data as T;
 }
 
@@ -146,6 +173,7 @@ async function loadHoras() {
 }
 
 async function llegada(folio: number) {
+  if (!canAssign.value) return;
   loading.value = true;
   try {
     await post("/sub/atmed/llegada", { ...props.session, hosi_folio: folio });
@@ -159,6 +187,7 @@ async function llegada(folio: number) {
 }
 
 async function doAsignar() {
+  if (!canAssign.value) return;
   loading.value = true;
   error.value = "";
   okMsg.value = "";
@@ -192,6 +221,7 @@ function selectCita(row: Record<string, unknown>) {
 }
 
 async function doConsulta() {
+  if (!canEditNote.value) return;
   if (!consulta.hosi_folio) {
     error.value = "Seleccione una cita (folio)";
     return;
@@ -210,6 +240,7 @@ async function doConsulta() {
 }
 
 async function doSignos() {
+  if (!canCaptureVitals.value) return;
   if (!signos.hosi_folio) {
     error.value = "Seleccione una cita (folio)";
     return;
@@ -243,12 +274,7 @@ onMounted(async () => {
   <div class="siah-atmed-widget space-y-4">
     <div class="flex flex-wrap gap-2">
       <UButton
-        v-for="t in [
-          { id: 'agenda', label: 'Agenda' },
-          { id: 'asignar', label: 'Asignar cita' },
-          { id: 'consulta', label: 'Consulta' },
-          { id: 'signos', label: 'Signos' },
-        ]"
+        v-for="t in tabs"
         :key="t.id"
         size="sm"
         :variant="tab === t.id ? 'solid' : 'soft'"
@@ -287,7 +313,7 @@ onMounted(async () => {
               size="xs"
               variant="soft"
               label="Llegó"
-              :disabled="Number(row.original.cits_estatus) >= 2"
+              :disabled="!canAssign || Number(row.original.cits_estatus) >= 2"
               @click="llegada(Number(row.original.hosi_folio))"
             />
             <UButton
@@ -318,7 +344,7 @@ onMounted(async () => {
       <p class="text-xs text-muted">{{ rows.length }} cita(s) · unidad {{ session.unitrab }}</p>
     </div>
 
-    <div v-else-if="tab === 'asignar'" class="grid gap-3 sm:grid-cols-3 border border-default rounded-lg p-4">
+    <fieldset v-else-if="tab === 'asignar'" :disabled="!canAssign" class="grid gap-3 sm:grid-cols-3 border border-default rounded-lg p-4">
       <UFormField label="Ficha"><UInput v-model="asignar.ficha" /></UFormField>
       <UFormField label="Código"><UInput v-model="asignar.codigo" /></UFormField>
       <UFormField label="Fecha"><UInput v-model="asignar.fecha" type="date" /></UFormField>
@@ -326,8 +352,10 @@ onMounted(async () => {
         <select
           v-model.number="asignar.esps_espserv"
           class="w-full rounded-md border border-default bg-default px-3 py-2 text-sm"
+          :disabled="!especialidades.length"
           @change="loadCatalogos"
         >
+          <option v-if="!especialidades.length" value="" disabled>Sin especialidades disponibles</option>
           <option v-for="e in especialidades" :key="e.esps_espserv" :value="e.esps_espserv">
             {{ e.esps_espserv }} — {{ e.espc_descrip }}
           </option>
@@ -337,12 +365,14 @@ onMounted(async () => {
         <select
           v-model="asignar.medc_ficha"
           class="w-full rounded-md border border-default bg-default px-3 py-2 text-sm"
+          :disabled="!medicos.length"
           @change="
             asignar.medc_codigo =
               medicos.find((m) => m.medc_ficha === asignar.medc_ficha)?.medc_codigo || '00';
             loadHoras();
           "
         >
+          <option v-if="!medicos.length" value="" disabled>Sin médicos disponibles</option>
           <option v-for="m in medicos" :key="m.medc_ficha + m.esps_espserv" :value="m.medc_ficha">
             {{ m.medc_nombre }} ({{ m.medc_ficha }})
           </option>
@@ -352,14 +382,16 @@ onMounted(async () => {
         <select
           v-model.number="asignar.hora"
           class="w-full rounded-md border border-default bg-default px-3 py-2 text-sm"
+          :disabled="!horas.length"
         >
+          <option v-if="!horas.length" value="" disabled>Sin horarios disponibles</option>
           <option v-for="h in horas" :key="h.hora" :value="h.hora">{{ h.label }}</option>
         </select>
       </UFormField>
       <div class="sm:col-span-3">
         <UButton icon="i-lucide-calendar-plus" label="Asignar cita" :loading="loading" @click="doAsignar" />
       </div>
-    </div>
+    </fieldset>
 
     <div v-else-if="tab === 'consulta'" class="space-y-3">
       <div
@@ -381,7 +413,7 @@ onMounted(async () => {
       </div>
 
       <!-- Acomodo siah-web NotasHospModal: cabecera 2 cols + SOAP apilado full-width -->
-      <section class="space-y-3 rounded-lg border border-default bg-default p-4">
+      <fieldset :disabled="!canEditNote" class="space-y-3 rounded-lg border border-default bg-default p-4">
         <h3 class="text-sm font-semibold text-highlighted">Nota SOAP</h3>
         <div class="grid gap-3 sm:grid-cols-2">
           <UFormField label="Folio cita">
@@ -418,10 +450,10 @@ onMounted(async () => {
           />
           <UButton icon="i-lucide-save" label="Grabar consulta" :loading="loading" @click="doConsulta" />
         </div>
-      </section>
+      </fieldset>
     </div>
 
-    <div v-else class="space-y-3">
+    <div v-else-if="tab === 'signos'" class="space-y-3">
       <div
         v-if="citaCtx.hosi_folio"
         class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-primary/10 ring ring-primary/20 px-4 py-3"
@@ -439,7 +471,7 @@ onMounted(async () => {
       </div>
 
       <!-- Acomodo siah-web: sección + grid 4 cols compacto -->
-      <section class="space-y-3 rounded-lg border border-default bg-default p-4">
+      <fieldset :disabled="!canCaptureVitals" class="space-y-3 rounded-lg border border-default bg-default p-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <h3 class="text-sm font-semibold text-highlighted">Captura de signos</h3>
           <UFormField label="Folio cita" class="w-40">
@@ -490,7 +522,21 @@ onMounted(async () => {
           />
           <UButton icon="i-lucide-activity" label="Grabar signos" :loading="loading" @click="doSignos" />
         </div>
-      </section>
+      </fieldset>
+    </div>
+
+    <div v-else-if="tab === 'receta'" class="space-y-3">
+      <RecetaSection
+        :api-base="apiBase"
+        :api-prefix="apiPrefix"
+        :fetch-fn="fetchFn"
+        :read-only="readOnly"
+        :can-prescribe="canPrescribe"
+        :hosi-folio="citaCtx.hosi_folio"
+        :ficha="citaCtx.ficha"
+        :codigo="citaCtx.codigo"
+        @saved="(record) => { okMsg = `Receta emitida · No. ${record.num_receta || '—'}`; }"
+      />
     </div>
   </div>
 </template>

@@ -50,7 +50,14 @@ export function createAtmedClient(config: AtmedClientConfig): AtmedClient {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const detail = (data as { detail?: unknown })?.detail;
-      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail || data));
+      const message = (data as { message?: unknown })?.message;
+      throw new Error(
+        typeof detail === "string"
+          ? detail
+          : typeof message === "string"
+            ? message
+            : "No fue posible completar la operación.",
+      );
     }
     return data as T;
   }
