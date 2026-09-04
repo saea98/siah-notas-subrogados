@@ -295,6 +295,43 @@ const consultaBloqueadaSinSignos = computed(
     !consultaTieneSignos.value,
 );
 
+/** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
+const SOAP_MIN_CHARS = 20;
+const SOAP_SIGNOS_PLAN_RE =
+  /SIGNOS VITALES:[\s\S]*?(?=\n(?:RECETA|SOLICITUD|PROCEDIMIENTO)|$)/i;
+
+function soapLen(text: string, stripSignos = false): number {
+  let t = (text || "").trim();
+  if (stripSignos) t = t.replace(SOAP_SIGNOS_PLAN_RE, "").trim();
+  return t.length;
+}
+
+const soapLens = computed(() => ({
+  sintomas: soapLen(consulta.sintomas),
+  objetivo: soapLen(consulta.objetivo),
+  analisis: soapLen(consulta.analisis),
+  plan: soapLen(consulta.plan, true),
+}));
+
+const soapFaltantes = computed(() => {
+  const labels: [keyof typeof soapLens.value, string][] = [
+    ["sintomas", "Síntomas / subjetivo"],
+    ["objetivo", "Objetivo"],
+    ["analisis", "Análisis"],
+    ["plan", "Plan"],
+  ];
+  return labels
+    .filter(([key]) => soapLens.value[key] < SOAP_MIN_CHARS)
+    .map(([, label]) => label);
+});
+
+const soapCompleto = computed(() => soapFaltantes.value.length === 0);
+
+function soapHint(n: number): string {
+  if (n >= SOAP_MIN_CHARS) return `${n} caracteres`;
+  return `${n}/${SOAP_MIN_CHARS} (mínimo)`;
+}
+
 async function loadRecetasConsulta() {
   recetasConsulta.value = [];
   if (!citaCtx.hosi_folio) return;
@@ -956,6 +993,12 @@ async function doConsulta() {
       "Esta especialidad exige signos vitales antes de grabar la nota. Abra SIGNOS VITALES primero.";
     return;
   }
+  if (!soapCompleto.value) {
+    error.value =
+      `SOAP incompleto: cada campo requiere al menos ${SOAP_MIN_CHARS} caracteres ` +
+      `(Plan sin contar el bloque automático de signos). Faltan: ${soapFaltantes.value.join(", ")}`;
+    return;
+  }
   loading.value = true;
   error.value = "";
   try {
@@ -1464,7 +1507,7 @@ onMounted(async () => {
               color="primary"
               size="sm"
               :loading="loading"
-              :disabled="!consulta.hosi_folio || consultaBloqueadaSinSignos"
+              :disabled="!consulta.hosi_folio || consultaBloqueadaSinSignos || !soapCompleto"
               @click="doConsulta"
             />
             <UButton
@@ -1642,8 +1685,18 @@ onMounted(async () => {
             </AtmedSectionCard>
 
             <AtmedSectionCard title="Nota clínica">
+              <p class="text-[0.7rem] text-muted m-0 mb-2">
+                Mínimo {{ SOAP_MIN_CHARS }} caracteres en Síntomas, Objetivo, Análisis y Plan
+                (Plan no cuenta el bloque automático de signos).
+              </p>
               <div class="siah-nota-fields grid w-full gap-4 lg:grid-cols-2">
-                <UFormField label="Síntomas o subjetivo" class="w-full min-w-0" :ui="notaFieldUi">
+                <UFormField
+                  label="Síntomas o subjetivo"
+                  class="w-full min-w-0"
+                  :ui="notaFieldUi"
+                  :hint="soapHint(soapLens.sintomas)"
+                  :error="soapLens.sintomas < SOAP_MIN_CHARS ? `Mínimo ${SOAP_MIN_CHARS} caracteres` : undefined"
+                >
                   <UTextarea
                     v-model="consulta.sintomas"
                     :rows="5"
@@ -1652,7 +1705,13 @@ onMounted(async () => {
                     :ui="notaTextareaUi"
                   />
                 </UFormField>
-                <UFormField label="Objetivo" class="w-full min-w-0" :ui="notaFieldUi">
+                <UFormField
+                  label="Objetivo"
+                  class="w-full min-w-0"
+                  :ui="notaFieldUi"
+                  :hint="soapHint(soapLens.objetivo)"
+                  :error="soapLens.objetivo < SOAP_MIN_CHARS ? `Mínimo ${SOAP_MIN_CHARS} caracteres` : undefined"
+                >
                   <UTextarea
                     v-model="consulta.objetivo"
                     :rows="5"
@@ -1661,7 +1720,13 @@ onMounted(async () => {
                     :ui="notaTextareaUi"
                   />
                 </UFormField>
-                <UFormField label="Análisis" class="w-full min-w-0" :ui="notaFieldUi">
+                <UFormField
+                  label="Análisis"
+                  class="w-full min-w-0"
+                  :ui="notaFieldUi"
+                  :hint="soapHint(soapLens.analisis)"
+                  :error="soapLens.analisis < SOAP_MIN_CHARS ? `Mínimo ${SOAP_MIN_CHARS} caracteres` : undefined"
+                >
                   <UTextarea
                     v-model="consulta.analisis"
                     :rows="5"
@@ -1670,7 +1735,13 @@ onMounted(async () => {
                     :ui="notaTextareaUi"
                   />
                 </UFormField>
-                <UFormField label="Plan" class="w-full min-w-0" :ui="notaFieldUi">
+                <UFormField
+                  label="Plan"
+                  class="w-full min-w-0"
+                  :ui="notaFieldUi"
+                  :hint="soapHint(soapLens.plan)"
+                  :error="soapLens.plan < SOAP_MIN_CHARS ? `Mínimo ${SOAP_MIN_CHARS} caracteres (sin signos auto)` : undefined"
+                >
                   <UTextarea
                     v-model="consulta.plan"
                     :rows="5"
@@ -1704,7 +1775,7 @@ onMounted(async () => {
                 color="primary"
                 size="sm"
                 :loading="loading"
-                :disabled="consultaBloqueadaSinSignos"
+                :disabled="consultaBloqueadaSinSignos || !soapCompleto"
                 @click="doConsulta"
               />
             </div>
