@@ -43,11 +43,12 @@ import { NotasSubrogadosWidget } from "@siah/notas-subrogados-widget";
 | Evento | Payload |
 |--------|---------|
 | `openExpediente` | `{ ficha, codigo, hosi_folio? }` |
+| `openReceta` | `{ ficha, codigo, empresa, hosi_folio?, paciente?, diagnostico? }` |
 
 ### Endpoints
 
 - `POST /sub/atmed/citas` · `llegada` · `asignar`
-- `POST /sub/atmed/consulta` · `signos`
+- `POST /sub/atmed/consulta` · `signos` · `signos/ultimos`
 - `POST /sub/atmed/especialidades` · `medicos` · `horas`
 
 ## Peer deps

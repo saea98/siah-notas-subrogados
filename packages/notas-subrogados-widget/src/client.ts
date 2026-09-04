@@ -19,6 +19,9 @@ export type AtmedClient = {
   asignarCita: (payload: SessionAuth & Record<string, unknown>) => Promise<OkRecord>;
   grabarConsulta: (payload: SessionAuth & Record<string, unknown>) => Promise<OkRecord>;
   grabarSignos: (payload: SessionAuth & Record<string, unknown>) => Promise<OkRecord>;
+  ultimosSignos: (
+    payload: SessionAuth & { hosi_folio?: number; ficha?: string },
+  ) => Promise<OkRows>;
   especialidades: (payload: SessionAuth) => Promise<OkRows>;
   medicos: (payload: SessionAuth & { esps_espserv?: number }) => Promise<OkRows>;
   horas: (
@@ -63,6 +66,7 @@ export function createAtmedClient(config: AtmedClientConfig): AtmedClient {
     asignarCita: (payload) => postJson("/sub/atmed/asignar", payload),
     grabarConsulta: (payload) => postJson("/sub/atmed/consulta", payload),
     grabarSignos: (payload) => postJson("/sub/atmed/signos", payload),
+    ultimosSignos: (payload) => postJson("/sub/atmed/signos/ultimos", payload),
     especialidades: (payload) => postJson("/sub/atmed/especialidades", payload),
     medicos: (payload) => postJson("/sub/atmed/medicos", payload),
     horas: (payload) => postJson("/sub/atmed/horas", payload),

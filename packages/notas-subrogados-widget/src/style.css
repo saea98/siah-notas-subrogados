@@ -1,0 +1,121 @@
+/* Tokens y layout compartidos del widget AtMed (el host aporta Tailwind / @nuxt/ui). */
+.siah-atmed-widget {
+  min-width: 0;
+}
+
+/* Campos de nota clínica: ancho completo dentro de UCard / UFormField */
+.siah-atmed-widget .siah-nota-fields {
+  width: 100%;
+}
+
+.siah-atmed-widget .siah-nota-fields [data-slot="container"] {
+  width: 100%;
+}
+
+/* Tablas de agenda: colores de estatus clínico (APT). */
+.siah-agenda-table tr.siah-agenda-row--confirmar td {
+  background: #ffe5e5;
+  color: #111;
+}
+
+.siah-agenda-table tr.siah-agenda-row--espera td {
+  background: #e8f7e8;
+  color: #0a6b0a;
+  font-weight: 600;
+}
+
+.siah-agenda-table tr.siah-agenda-row--atendido td {
+  background: #e3eefb;
+  color: #0a3d91;
+}
+
+.siah-agenda-table tr.siah-agenda-row--diferido td {
+  background: #f0e0e8;
+  color: #6b2038;
+}
+
+.siah-agenda-table tr.siah-agenda-row--picked td {
+  outline: 2px solid var(--ui-primary, #0aa7d6);
+  outline-offset: -2px;
+}
+
+/* Mini calendario lateral */
+.siah-mini-cal {
+  margin-top: 0.35rem;
+  border: 1px solid var(--ui-border, #e5e7eb);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--ui-bg, #fff);
+}
+
+.siah-mini-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0.35rem 0.4rem;
+  background: var(--ui-bg-muted, #f3f4f6);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: var(--ui-text-highlighted, #111);
+}
+
+.siah-mini-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background: var(--ui-border, #e5e7eb);
+}
+
+.siah-mini-cal-grid--head span {
+  background: var(--ui-bg-muted, #f3f4f6);
+  text-align: center;
+  font-size: 0.52rem;
+  font-weight: 700;
+  padding: 0.2rem 0;
+  color: var(--ui-text-muted, #6b7280);
+}
+
+.siah-cal-day {
+  border: none;
+  background: var(--ui-bg, #fff);
+  font-size: 0.58rem;
+  font-weight: 600;
+  padding: 0.28rem 0;
+  cursor: pointer;
+  color: var(--ui-text, #374151);
+}
+
+.siah-cal-day:hover:not(:disabled) {
+  background: var(--ui-bg-elevated, #f9fafb);
+}
+
+.siah-cal-day--empty {
+  background: var(--ui-bg-muted, #f3f4f6);
+  cursor: default;
+}
+
+.siah-cal-day--selected {
+  background: var(--ui-primary, #0aa7d6);
+  color: #fff;
+}
+
+.siah-cal-day--today:not(.siah-cal-day--selected) {
+  box-shadow: inset 0 0 0 1px var(--ui-primary, #0aa7d6);
+}
+
+.siah-cal-nav {
+  border: none;
+  background: transparent;
+  color: var(--ui-text-muted, #6b7280);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  border-radius: 0.25rem;
+}
+
+.siah-cal-nav:hover {
+  color: var(--ui-primary, #0aa7d6);
+  background: var(--ui-bg-elevated, #f9fafb);
+}
