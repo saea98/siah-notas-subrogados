@@ -131,8 +131,44 @@ const consulta = reactive({
 const notaCronica = reactive({
   diabetes: "negativo" as "negativo" | "positivo",
   hipertension: "negativo" as "negativo" | "positivo",
+  obesidad: "negativo" as "negativo" | "positivo",
   alergias: "negativo" as "negativo" | "positivo",
+  alergiasDetalle: "",
 });
+
+function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergias") {
+  notaCronica[campo] = notaCronica[campo] === "positivo" ? "negativo" : "positivo";
+  if (campo === "alergias" && notaCronica.alergias === "negativo") {
+    notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
+  }
+  syncCronicosEnAnalisis();
+}
+
+function syncCronicosEnAnalisis() {
+  const lineas = [
+    `ANTECEDENTES CRONICOS: DIABETES ${notaCronica.diabetes.toUpperCase()}, ` +
+      `HIPERTENSION ${notaCronica.hipertension.toUpperCase()}, ` +
+      `OBESIDAD ${notaCronica.obesidad.toUpperCase()}.`,
+  ];
+  if (notaCronica.alergias === "positivo") {
+    const det = (notaCronica.alergiasDetalle || "").trim() || "ALERGIA REFERIDA";
+    lineas.push(det.startsWith("PACIENTE REFIERE") || det.startsWith("ALERGIAS") ? det : `PACIENTE REFIERE SER ALERGICO A ${det}`);
+  } else {
+    lineas.push("ALERGIAS NO REGISTRADAS");
+  }
+  const block = lineas.join("\n");
+  const re = /ANTECEDENTES CRONICOS:[\s\S]*?(?=\n\n|$)/i;
+  const analisis = (consulta.analisis || "").trim();
+  if (!analisis || analisis.toUpperCase().includes("ALERGIAS NO REGISTRADAS") || re.test(analisis)) {
+    if (re.test(analisis)) {
+      consulta.analisis = analisis.replace(re, block).trim();
+    } else if (!analisis || analisis.toUpperCase().includes("ALERGIAS")) {
+      consulta.analisis = block;
+    } else {
+      consulta.analisis = `${block}\n\n${analisis}`.trim();
+    }
+  }
+}
 
 const consultaPhotoFailed = ref(false);
 const consultaLoadedFolio = ref(0);
@@ -917,9 +953,18 @@ async function loadConsultaContext(force = false) {
     const cr = (preData.cronicos as Record<string, boolean>) || {};
     notaCronica.diabetes = cr.diabetes ? "positivo" : "negativo";
     notaCronica.hipertension = cr.hipertension ? "positivo" : "negativo";
-    const alergiasTxt = String(preData.analisis || "");
-    notaCronica.alergias = alergiasTxt && !alergiasTxt.includes("NO REGISTRADAS") ? "positivo" : "negativo";
-
+    notaCronica.obesidad = cr.obesidad ? "positivo" : "negativo";
+    const alergiasTxt = String(preData.alergias || preData.analisis || "");
+    notaCronica.alergiasDetalle = alergiasTxt;
+    notaCronica.alergias =
+      preData.alergiasRegistradas === true ||
+      (alergiasTxt && !alergiasTxt.toUpperCase().includes("NO REGISTRADAS"))
+        ? "positivo"
+        : "negativo";
+    if (!consulta.analisis.trim() && alergiasTxt) {
+      consulta.analisis = alergiasTxt;
+    }
+    syncCronicosEnAnalisis();
     consultaLoadedFolio.value = citaCtx.hosi_folio;
     await loadUltimosSignos();
     if (ultimosSignos.value && !SIGNOS_PLAN_RE.test(consulta.plan || "")) {
@@ -943,6 +988,11 @@ function limpiarConsulta() {
   consulta.enfermedadPrimeraVez = false;
   consulta.enfermedadSub = false;
   consultaLoadedFolio.value = 0;
+  notaCronica.diabetes = "negativo";
+  notaCronica.hipertension = "negativo";
+  notaCronica.obesidad = "negativo";
+  notaCronica.alergias = "negativo";
+  notaCronica.alergiasDetalle = "";
 }
 
 function openExpedienteConsulta() {
@@ -999,10 +1049,19 @@ async function doConsulta() {
       `(Plan sin contar el bloque automático de signos). Faltan: ${soapFaltantes.value.join(", ")}`;
     return;
   }
+  syncCronicosEnAnalisis();
   loading.value = true;
   error.value = "";
   try {
-    const res = await post<{ mensaje: string }>("/sub/atmed/consulta", { ...props.session, ...consulta });
+    const res = await post<{ mensaje: string }>("/sub/atmed/consulta", {
+      ...props.session,
+      ...consulta,
+      diabetes: notaCronica.diabetes === "positivo",
+      hipertension: notaCronica.hipertension === "positivo",
+      obesidad: notaCronica.obesidad === "positivo",
+      alergias: notaCronica.alergias === "positivo",
+      alergias_texto: notaCronica.alergiasDetalle || consulta.analisis,
+    });
     okMsg.value = res.mensaje;
     await load();
     await loadRecetasConsulta();
@@ -1639,8 +1698,16 @@ onMounted(async () => {
             </div>
 
             <AtmedSectionCard title="Enfermedad crónico degenerativa">
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div class="flex flex-col items-center gap-1">
+              <p class="text-[0.7rem] text-muted m-0 mb-2">
+                Prellenado desde censo / antecedentes. Pulse el badge para marcar positivo o negativo;
+                se refleja en Análisis y se guarda al grabar la consulta.
+              </p>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <button
+                  type="button"
+                  class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
+                  @click="toggleCronico('diabetes')"
+                >
                   <span class="text-xs font-bold text-muted">DIABETES</span>
                   <UBadge
                     :color="notaCronica.diabetes === 'positivo' ? 'error' : 'success'"
@@ -1649,8 +1716,12 @@ onMounted(async () => {
                   >
                     {{ notaCronica.diabetes === "positivo" ? "POSITIVO" : "NEGATIVO" }}
                   </UBadge>
-                </div>
-                <div class="flex flex-col items-center gap-1">
+                </button>
+                <button
+                  type="button"
+                  class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
+                  @click="toggleCronico('hipertension')"
+                >
                   <span class="text-xs font-bold text-muted">HIPERTENSIÓN</span>
                   <UBadge
                     :color="notaCronica.hipertension === 'positivo' ? 'error' : 'success'"
@@ -1659,8 +1730,26 @@ onMounted(async () => {
                   >
                     {{ notaCronica.hipertension === "positivo" ? "POSITIVO" : "NEGATIVO" }}
                   </UBadge>
-                </div>
-                <div class="flex flex-col items-center gap-1">
+                </button>
+                <button
+                  type="button"
+                  class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
+                  @click="toggleCronico('obesidad')"
+                >
+                  <span class="text-xs font-bold text-muted">OBESIDAD</span>
+                  <UBadge
+                    :color="notaCronica.obesidad === 'positivo' ? 'error' : 'success'"
+                    variant="subtle"
+                    size="sm"
+                  >
+                    {{ notaCronica.obesidad === "positivo" ? "POSITIVO" : "NEGATIVO" }}
+                  </UBadge>
+                </button>
+                <button
+                  type="button"
+                  class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
+                  @click="toggleCronico('alergias')"
+                >
                   <span class="text-xs font-bold text-muted">ALERGIAS</span>
                   <UBadge
                     :color="notaCronica.alergias === 'positivo' ? 'error' : 'success'"
@@ -1669,8 +1758,22 @@ onMounted(async () => {
                   >
                     {{ notaCronica.alergias === "positivo" ? "POSITIVO" : "NEGATIVO" }}
                   </UBadge>
-                </div>
+                </button>
               </div>
+              <UFormField
+                v-if="notaCronica.alergias === 'positivo'"
+                label="Detalle de alergias"
+                class="mt-3 w-full"
+                :ui="notaFieldUi"
+              >
+                <UTextarea
+                  v-model="notaCronica.alergiasDetalle"
+                  :rows="2"
+                  class="w-full"
+                  :ui="notaTextareaUi"
+                  @blur="syncCronicosEnAnalisis"
+                />
+              </UFormField>
             </AtmedSectionCard>
 
             <AtmedSectionCard title="Motivo de consulta">
