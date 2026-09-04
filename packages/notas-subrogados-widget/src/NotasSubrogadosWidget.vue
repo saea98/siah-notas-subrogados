@@ -260,6 +260,39 @@ const signosResumenConsulta = computed(() => {
   return formatSignosResumenLinea(ultimosSignos.value);
 });
 
+const recetasConsulta = ref<Record<string, unknown>[]>([]);
+
+function statusRecetaLabel(raw: unknown): string {
+  const u = String(raw || "").toUpperCase();
+  if (u === "A1" || u === "PENDIENTE") return "A1";
+  if (u === "E1" || u === "ENTREGADA" || u === "SURTIDA") return "E1";
+  if (u === "C1" || u === "CANCELADA") return "C1";
+  return u || "—";
+}
+
+const recetasResumenConsulta = computed(() => {
+  if (!recetasConsulta.value.length) return "";
+  return recetasConsulta.value
+    .map((r) => {
+      const est = statusRecetaLabel(r.estatus);
+      return `#${r.id} ${r.medicamento || "—"} (${est})`;
+    })
+    .join(" · ");
+});
+
+async function loadRecetasConsulta() {
+  recetasConsulta.value = [];
+  if (!citaCtx.hosi_folio) return;
+  try {
+    const data = await post<{ rows?: Record<string, unknown>[] }>("/sub/recetas/list", {
+      ...props.session,
+      hosi_folio: citaCtx.hosi_folio,
+    });
+    recetasConsulta.value = data.rows || [];
+  } catch {
+    recetasConsulta.value = [];
+  }
+}
 
 function formatSignosFecha(row: SignosRow | null): string {
   if (!row) return "";
@@ -831,6 +864,7 @@ async function loadConsultaContext(force = false) {
     if (ultimosSignos.value && !SIGNOS_PLAN_RE.test(consulta.plan || "")) {
       syncSignosEnPlan(formatSignosResumenLinea(ultimosSignos.value));
     }
+    await loadRecetasConsulta();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error cargando datos del paciente";
   }
@@ -899,6 +933,7 @@ async function doConsulta() {
     const res = await post<{ mensaje: string }>("/sub/atmed/consulta", { ...props.session, ...consulta });
     okMsg.value = res.mensaje;
     await load();
+    await loadRecetasConsulta();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error al grabar consulta";
   } finally {
@@ -1446,6 +1481,14 @@ onMounted(async () => {
             variant="subtle"
             title="Signos vitales en la consulta"
             :description="signosResumenConsulta"
+          />
+
+          <UAlert
+            v-if="recetasResumenConsulta"
+            color="primary"
+            variant="subtle"
+            title="Recetas de este folio (consulta, sin reescribir la nota)"
+            :description="recetasResumenConsulta"
           />
 
           <UAlert
