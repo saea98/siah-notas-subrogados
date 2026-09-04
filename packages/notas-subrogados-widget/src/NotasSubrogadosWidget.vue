@@ -54,7 +54,7 @@ const tab = ref<"agenda" | "asignar" | "consulta">("agenda");
 const showAsideRail = computed(() => showChromeNav.value || tab.value === "agenda");
 const sidebarTabActive = computed(() => tab.value);
 
-const especialidades = ref<{ esps_espserv: number; espc_descrip: string }[]>([]);
+const especialidades = ref<{ esps_espserv: number; espc_descrip: string; requiere_signos: string }[]>([]);
 const medicos = ref<{ medc_ficha: string; medc_codigo: string; medc_nombre: string; esps_espserv: number }[]>([]);
 const horas = ref<{ hora: number; label: string }[]>([]);
 
@@ -280,6 +280,21 @@ const recetasResumenConsulta = computed(() => {
     .join(" · ");
 });
 
+const consultaRequiereSignos = computed(() => citaCtx.requiere_signos !== "N");
+
+const consultaTieneSignos = computed(() => {
+  if (!ultimosSignos.value) return false;
+  const folio = Number(ultimosSignos.value.hosi_folio || 0);
+  return folio > 0 && folio === Number(citaCtx.hosi_folio || 0);
+});
+
+const consultaBloqueadaSinSignos = computed(
+  () =>
+    Boolean(consulta.hosi_folio) &&
+    consultaRequiereSignos.value &&
+    !consultaTieneSignos.value,
+);
+
 async function loadRecetasConsulta() {
   recetasConsulta.value = [];
   if (!citaCtx.hosi_folio) return;
@@ -397,6 +412,7 @@ const citaCtx = reactive({
   sexo: "",
   sangre: "",
   esps_espserv: 0,
+  requiere_signos: "S",
 });
 
 const prefix = computed(() => {
@@ -718,6 +734,7 @@ async function loadCatalogos() {
     especialidades.value = (esp.rows || []).map((r) => ({
       esps_espserv: Number(r.esps_espserv),
       espc_descrip: String(r.espc_descrip || ""),
+      requiere_signos: String(r.requiere_signos || "S").toUpperCase() === "N" ? "N" : "S",
     }));
     medicos.value = (med.rows || []).map((r) => ({
       medc_ficha: String(r.medc_ficha || ""),
@@ -805,6 +822,13 @@ function selectCita(row: Record<string, unknown>) {
   citaCtx.horaInicio = Number(row.cits_hrllegada || 0);
   citaCtx.horaTermino = 0;
   citaCtx.esps_espserv = Number(row.esps_espserv || 0);
+  const flag = String(row.requiere_signos || "").toUpperCase();
+  if (flag === "N" || flag === "S") {
+    citaCtx.requiere_signos = flag;
+  } else {
+    const esp = especialidades.value.find((e) => e.esps_espserv === citaCtx.esps_espserv);
+    citaCtx.requiere_signos = esp?.requiere_signos === "N" ? "N" : "S";
+  }
   if (consultaLoadedFolio.value !== folio) {
     consultaLoadedFolio.value = 0;
   }
@@ -925,6 +949,11 @@ function usarCitaEnAsignar(row: Record<string, unknown>) {
 async function doConsulta() {
   if (!consulta.hosi_folio) {
     error.value = "Seleccione una cita (folio)";
+    return;
+  }
+  if (consultaBloqueadaSinSignos.value) {
+    error.value =
+      "Esta especialidad exige signos vitales antes de grabar la nota. Abra SIGNOS VITALES primero.";
     return;
   }
   loading.value = true;
@@ -1435,13 +1464,13 @@ onMounted(async () => {
               color="primary"
               size="sm"
               :loading="loading"
-              :disabled="!consulta.hosi_folio"
+              :disabled="!consulta.hosi_folio || consultaBloqueadaSinSignos"
               @click="doConsulta"
             />
             <UButton
               label="SIGNOS VITALES"
               color="primary"
-              variant="soft"
+              :variant="consultaBloqueadaSinSignos ? 'solid' : 'soft'"
               size="sm"
               :disabled="!consulta.hosi_folio"
               @click="openSignosModal"
@@ -1474,6 +1503,14 @@ onMounted(async () => {
               @click="openExpedienteConsulta"
             />
           </div>
+
+          <UAlert
+            v-if="consultaBloqueadaSinSignos"
+            color="warning"
+            variant="subtle"
+            title="Signos vitales requeridos"
+            description="Esta especialidad exige registrar signos del folio antes de grabar la nota clínica (odontología y excepciones quedan exentas)."
+          />
 
           <UAlert
             v-if="signosResumenConsulta"
@@ -1662,7 +1699,14 @@ onMounted(async () => {
 
             <div class="flex justify-end gap-2 pt-1">
               <UButton label="LIMPIAR" color="neutral" variant="outline" size="sm" @click="limpiarConsulta" />
-              <UButton label="GRABA CONSULTA" color="primary" size="sm" :loading="loading" @click="doConsulta" />
+              <UButton
+                label="GRABA CONSULTA"
+                color="primary"
+                size="sm"
+                :loading="loading"
+                :disabled="consultaBloqueadaSinSignos"
+                @click="doConsulta"
+              />
             </div>
           </template>
         </div>
