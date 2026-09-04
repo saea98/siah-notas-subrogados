@@ -30,8 +30,10 @@ defineProps<{
   ultimosSignos: SignosRow | null;
   signosImc: number | null;
   signosClasificacion: string;
+  signosTensionClasificacion?: string;
   ultimosImc: number | null;
   ultimosClasificacion: string;
+  ultimosTensionClasificacion?: string;
   ultimosFechaLabel: string;
 }>();
 
@@ -91,6 +93,19 @@ const emit = defineEmits<{
                   <span class="text-muted">/</span>
                   <UInput v-model="signos.tension_dia" inputmode="numeric" size="sm" class="flex-1" />
                 </div>
+              </UFormField>
+              <UFormField label="Clasificación TA">
+                <UInput
+                  :model-value="signosTensionClasificacion || '—'"
+                  readonly
+                  size="sm"
+                  :ui="{
+                    base:
+                      signosTensionClasificacion === 'HIPERTENSO' || signosTensionClasificacion === 'PREHIPERTENSO'
+                        ? 'bg-warning-100 dark:bg-warning-950/30'
+                        : '',
+                  }"
+                />
               </UFormField>
               <UFormField label="Temp (°C)">
                 <UInput v-model="signos.temperatura" inputmode="decimal" size="sm" />
@@ -153,6 +168,9 @@ const emit = defineEmits<{
                   readonly
                   size="sm"
                 />
+              </UFormField>
+              <UFormField label="Clasificación TA">
+                <UInput :model-value="ultimosTensionClasificacion || '—'" readonly size="sm" />
               </UFormField>
               <UFormField label="Temp (°C)">
                 <UInput :model-value="ultimosSignos.temperatura ?? '—'" readonly size="sm" />

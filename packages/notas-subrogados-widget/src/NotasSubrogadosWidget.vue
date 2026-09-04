@@ -150,6 +150,7 @@ const signos = reactive({
 });
 
 type SignosRow = {
+  hosi_folio?: number;
   pulso?: string | number;
   respiracion?: string | number;
   tension_sis?: string | number;
@@ -188,6 +189,77 @@ function clasificacionImc(imc: number | null): string {
   if (imc < 40) return "OBESIDAD II";
   return "OBESIDAD III";
 }
+
+/** Clasificación TA adulta (mmHg) — alerta prehipertenso / hipertenso. */
+function clasificacionTension(sisRaw: unknown, diaRaw: unknown): string {
+  const sis = parseSignoNum(sisRaw);
+  const dia = parseSignoNum(diaRaw);
+  if (sis == null || dia == null) return "";
+  if (sis >= 140 || dia >= 90) return "HIPERTENSO";
+  if (sis >= 130 || dia >= 85) return "PREHIPERTENSO";
+  if (sis < 90 || dia < 60) return "HIPOTENSION";
+  return "NORMAL";
+}
+
+function formatSignosResumenLinea(s: {
+  pulso?: unknown;
+  respiracion?: unknown;
+  tension_sis?: unknown;
+  tension_dia?: unknown;
+  temperatura?: unknown;
+  peso?: unknown;
+  estatura?: unknown;
+  abdominal?: unknown;
+}): string {
+  const imc = calcImc(s.peso, s.estatura);
+  const imcTxt = imc != null ? String(imc) : "—";
+  const clas = clasificacionImc(imc) || "—";
+  const taClas = clasificacionTension(s.tension_sis, s.tension_dia);
+  const taExtra = taClas ? ` (${taClas})` : "";
+  return [
+    "SIGNOS VITALES:",
+    `PULSO: ${s.pulso || "—"}`,
+    `RESPIRACION: ${s.respiracion || "—"}`,
+    `TENSION ARTERIAL: ${s.tension_sis || "—"}/${s.tension_dia || "—"} mmHg${taExtra}`,
+    `TEMPERATURA: ${s.temperatura || "—"} °C`,
+    `PESO: ${s.peso || "—"} KG`,
+    `ESTATURA: ${s.estatura || "—"} M`,
+    `IMC: ${imcTxt} KG/M² (${clas})`,
+    `PERIMETRO ABDOMINAL: ${s.abdominal || "—"} CMS`,
+  ].join(" ");
+}
+
+const SIGNOS_PLAN_RE =
+  /SIGNOS VITALES:[\s\S]*?(?=\n(?:RECETA|SOLICITUD|PROCEDIMIENTO)|$)/i;
+
+function syncSignosEnPlan(resumen: string) {
+  const block = resumen.trim();
+  if (!block) return;
+  const plan = (consulta.plan || "").trim();
+  if (!plan) {
+    consulta.plan = block;
+    return;
+  }
+  if (SIGNOS_PLAN_RE.test(plan)) {
+    consulta.plan = plan.replace(SIGNOS_PLAN_RE, block).trim();
+  } else {
+    consulta.plan = `${plan}\n\n${block}`.trim();
+  }
+}
+
+const signosTensionClasificacion = computed(() =>
+  clasificacionTension(signos.tension_sis, signos.tension_dia),
+);
+const ultimosTensionClasificacion = computed(() =>
+  ultimosSignos.value
+    ? clasificacionTension(ultimosSignos.value.tension_sis, ultimosSignos.value.tension_dia)
+    : "",
+);
+const signosResumenConsulta = computed(() => {
+  if (!ultimosSignos.value) return "";
+  return formatSignosResumenLinea(ultimosSignos.value);
+});
+
 
 function formatSignosFecha(row: SignosRow | null): string {
   if (!row) return "";
@@ -243,6 +315,11 @@ async function openSignosModal() {
   limpiarSignosCaptura();
   signosModalOpen.value = true;
   await loadUltimosSignos();
+  // Si ya hay toma del folio actual, precargar captura (no solo “últimos” genéricos).
+  const u = ultimosSignos.value;
+  if (u && Number(u.hosi_folio || 0) === Number(consulta.hosi_folio)) {
+    copiarUltimosSignos();
+  }
 }
 
 function closeSignosModal() {
@@ -750,6 +827,10 @@ async function loadConsultaContext(force = false) {
     notaCronica.alergias = alergiasTxt && !alergiasTxt.includes("NO REGISTRADAS") ? "positivo" : "negativo";
 
     consultaLoadedFolio.value = citaCtx.hosi_folio;
+    await loadUltimosSignos();
+    if (ultimosSignos.value && !SIGNOS_PLAN_RE.test(consulta.plan || "")) {
+      syncSignosEnPlan(formatSignosResumenLinea(ultimosSignos.value));
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error cargando datos del paciente";
   }
@@ -836,6 +917,13 @@ async function doSignos() {
     const res = await post<{ mensaje: string }>("/sub/atmed/signos", { ...props.session, ...signos });
     okMsg.value = res.mensaje;
     await loadUltimosSignos();
+    const resumen = formatSignosResumenLinea(signos);
+    syncSignosEnPlan(resumen);
+    // Reflejar crónico hipertenso si la toma lo sugiere (solo refuerzo UI; censo manda).
+    const ta = clasificacionTension(signos.tension_sis, signos.tension_dia);
+    if (ta === "HIPERTENSO" && notaCronica.hipertension === "negativo") {
+      notaCronica.hipertension = "positivo";
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error al grabar signos";
   } finally {
@@ -1353,6 +1441,14 @@ onMounted(async () => {
           </div>
 
           <UAlert
+            v-if="signosResumenConsulta"
+            color="info"
+            variant="subtle"
+            title="Signos vitales en la consulta"
+            :description="signosResumenConsulta"
+          />
+
+          <UAlert
             v-if="!consulta.hosi_folio"
             color="neutral"
             variant="subtle"
@@ -1538,8 +1634,10 @@ onMounted(async () => {
       :ultimos-signos="ultimosSignos"
       :signos-imc="signosImc"
       :signos-clasificacion="signosClasificacion"
+      :signos-tension-clasificacion="signosTensionClasificacion"
       :ultimos-imc="ultimosImc"
       :ultimos-clasificacion="ultimosClasificacion"
+      :ultimos-tension-clasificacion="ultimosTensionClasificacion"
       :ultimos-fecha-label="ultimosFechaLabel"
       @graba="doSignos"
       @copiar="copiarUltimosSignos"
