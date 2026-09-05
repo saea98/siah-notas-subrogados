@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import AtmedSectionCard from "./components/AtmedSectionCard.vue";
+import CatalogAutocomplete from "./components/CatalogAutocomplete.vue";
 import SignosVitalesModal from "./components/SignosVitalesModal.vue";
 import ServiciosModal from "./components/ServiciosModal.vue";
 import "./style.css";
@@ -136,6 +137,33 @@ const notaCronica = reactive({
   alergiasDetalle: "",
 });
 
+const procedimientosSel = ref<{ clave: string; descripcion: string }[]>([]);
+const procQ = ref("");
+
+function onPickCieMotivo(hit: { clave: string; descripcion: string }) {
+  consulta.motivoCie10 = hit.clave.slice(0, 5).toUpperCase();
+  if (!consulta.motivoConsulta.trim()) consulta.motivoConsulta = hit.descripcion;
+}
+
+function onPickCieDx(hit: { clave: string; descripcion: string }) {
+  consulta.diai_clacie1 = hit.clave.slice(0, 5).toUpperCase();
+  consulta.diagnosticoTexto = hit.descripcion;
+}
+
+function onPickProcedimiento(hit: { clave: string; descripcion: string }) {
+  if (procedimientosSel.value.some((p) => p.clave === hit.clave)) return;
+  procedimientosSel.value.push({ clave: hit.clave, descripcion: hit.descripcion });
+  procQ.value = "";
+  const line = `PROCEDIMIENTO: ${hit.clave} ${hit.descripcion}`.trim();
+  const plan = (consulta.plan || "").trim();
+  if (!plan.includes(hit.clave)) {
+    consulta.plan = plan ? `${plan}\n${line}` : line;
+  }
+}
+
+function quitarProcedimiento(clave: string) {
+  procedimientosSel.value = procedimientosSel.value.filter((p) => p.clave !== clave);
+}
 function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergias") {
   notaCronica[campo] = notaCronica[campo] === "positivo" ? "negativo" : "positivo";
   if (campo === "alergias" && notaCronica.alergias === "negativo") {
@@ -993,6 +1021,8 @@ function limpiarConsulta() {
   notaCronica.obesidad = "negativo";
   notaCronica.alergias = "negativo";
   notaCronica.alergiasDetalle = "";
+  procedimientosSel.value = [];
+  procQ.value = "";
 }
 
 function openExpedienteConsulta() {
@@ -1777,13 +1807,27 @@ onMounted(async () => {
             </AtmedSectionCard>
 
             <AtmedSectionCard title="Motivo de consulta">
-              <div class="grid w-full gap-3 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-end">
-                <UFormField label="CIE-10" class="w-full" :ui="notaFieldUi">
-                  <UInput v-model="consulta.motivoCie10" maxlength="5" size="sm" class="w-full uppercase" />
-                </UFormField>
-                <UFormField label="Motivo de consulta" class="w-full min-w-0" :ui="notaFieldUi">
-                  <UInput v-model="consulta.motivoConsulta" size="sm" class="w-full" />
-                </UFormField>
+              <p class="text-[0.7rem] text-muted m-0 mb-2">
+                Autocomplete CIE-10 (≥2 caracteres). No se carga el catálogo completo al cliente.
+              </p>
+              <div class="grid w-full gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:items-start">
+                <CatalogAutocomplete
+                  :api-base="apiBase"
+                  :api-prefix="apiPrefix"
+                  :session="session"
+                  tipo="cie10"
+                  label="Buscar CIE-10 (motivo)"
+                  placeholder="Clave o descripción…"
+                  @select="onPickCieMotivo"
+                />
+                <div class="grid gap-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
+                  <UFormField label="CIE-10" class="w-full" :ui="notaFieldUi">
+                    <UInput v-model="consulta.motivoCie10" maxlength="5" size="sm" class="w-full uppercase" />
+                  </UFormField>
+                  <UFormField label="Motivo de consulta" class="w-full min-w-0" :ui="notaFieldUi">
+                    <UInput v-model="consulta.motivoConsulta" size="sm" class="w-full" />
+                  </UFormField>
+                </div>
               </div>
             </AtmedSectionCard>
 
@@ -1857,18 +1901,68 @@ onMounted(async () => {
             </AtmedSectionCard>
 
             <AtmedSectionCard title="Diagnóstico de consulta">
-              <div class="flex flex-wrap items-end gap-3">
-                <UFormField label="CIE-10" class="w-24">
-                  <UInput v-model="consulta.diai_clacie1" maxlength="5" placeholder="Ej. R51X" size="sm" class="uppercase" />
-                </UFormField>
-                <UFormField label="Diagnóstico de consulta" class="min-w-0 flex-1">
-                  <UInput v-model="consulta.diagnosticoTexto" size="sm" />
-                </UFormField>
-                <span class="text-xs font-bold text-muted pb-2">ENFERMEDAD</span>
-                <UCheckbox v-model="consulta.enfermedadPrimeraVez" label="1a VEZ" />
-                <UCheckbox v-model="consulta.enfermedadSub" label="SUB." />
-                <UButton icon="i-lucide-plus" color="primary" variant="soft" size="sm" title="Agregar diagnóstico" />
+              <div class="space-y-3">
+                <CatalogAutocomplete
+                  :api-base="apiBase"
+                  :api-prefix="apiPrefix"
+                  :session="session"
+                  tipo="cie10"
+                  label="Buscar CIE-10 (diagnóstico)"
+                  placeholder="Clave o descripción (≥2 caracteres)…"
+                  @select="onPickCieDx"
+                />
+                <div class="flex flex-wrap items-end gap-3">
+                  <UFormField label="CIE-10" class="w-24">
+                    <UInput
+                      v-model="consulta.diai_clacie1"
+                      maxlength="5"
+                      placeholder="Ej. R51X"
+                      size="sm"
+                      class="uppercase"
+                    />
+                  </UFormField>
+                  <UFormField label="Diagnóstico de consulta" class="min-w-0 flex-1">
+                    <UInput v-model="consulta.diagnosticoTexto" size="sm" />
+                  </UFormField>
+                  <span class="text-xs font-bold text-muted pb-2">ENFERMEDAD</span>
+                  <UCheckbox v-model="consulta.enfermedadPrimeraVez" label="1a VEZ" />
+                  <UCheckbox v-model="consulta.enfermedadSub" label="SUB." />
+                  <UButton icon="i-lucide-plus" color="primary" variant="soft" size="sm" title="Agregar diagnóstico" />
+                </div>
               </div>
+            </AtmedSectionCard>
+
+            <AtmedSectionCard title="Procedimientos médicos">
+              <p class="text-[0.7rem] text-muted m-0 mb-2">
+                Catálogo CIE-9 / procedimientos de consultorio (autocomplete ≥2 caracteres). Se anexa al Plan.
+              </p>
+              <CatalogAutocomplete
+                v-model="procQ"
+                :api-base="apiBase"
+                :api-prefix="apiPrefix"
+                :session="session"
+                tipo="procedimientos"
+                placeholder="Buscar procedimiento…"
+                @select="onPickProcedimiento"
+              />
+              <ul v-if="procedimientosSel.length" class="mt-2 m-0 list-none space-y-1 p-0">
+                <li
+                  v-for="p in procedimientosSel"
+                  :key="p.clave"
+                  class="flex items-center justify-between gap-2 rounded-md border border-default px-2 py-1 text-xs"
+                >
+                  <span
+                    ><strong>{{ p.clave }}</strong> — {{ p.descripcion }}</span
+                  >
+                  <UButton
+                    icon="i-lucide-x"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    @click="quitarProcedimiento(p.clave)"
+                  />
+                </li>
+              </ul>
             </AtmedSectionCard>
 
             <div class="flex justify-end gap-2 pt-1">
