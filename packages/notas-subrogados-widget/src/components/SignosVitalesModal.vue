@@ -47,9 +47,9 @@ const emit = defineEmits<{
 <template>
   <UModal v-model:open="open" :ui="{ content: 'max-w-4xl w-full' }">
     <template #content>
-      <div class="flex flex-col max-h-[min(92vh,720px)]">
+      <div class="flex flex-col max-h-[min(92vh,90vh)]">
         <div
-          class="flex flex-wrap items-center justify-between gap-2 border-b border-default bg-elevated px-4 py-3"
+          class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-default bg-elevated px-4 py-3"
         >
           <UButton
             label="GRABA SIGNOS"
@@ -64,11 +64,11 @@ const emit = defineEmits<{
           <UButton label="Plan Nutricional" color="success" variant="soft" size="sm" disabled />
         </div>
 
-        <p class="border-b border-default px-4 py-2 text-xs font-semibold uppercase text-primary">
+        <p class="shrink-0 border-b border-default px-4 py-2 text-xs font-semibold uppercase text-primary">
           {{ pacienteLine }}
         </p>
 
-        <div class="grid gap-3 p-3 md:grid-cols-2 overflow-y-auto">
+        <div class="min-h-0 flex-1 grid gap-3 p-3 md:grid-cols-2 overflow-y-auto overscroll-contain">
           <UCard
             :ui="{
               root: 'min-h-56',

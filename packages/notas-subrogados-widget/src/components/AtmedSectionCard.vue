@@ -5,9 +5,9 @@ defineProps<{ title: string }>();
 <template>
   <UCard
     :ui="{
-      root: 'overflow-hidden w-full',
+      root: 'overflow-visible w-full',
       header: 'px-3 py-2 bg-elevated border-b border-default',
-      body: 'p-3 w-full',
+      body: 'p-3 w-full overflow-visible',
     }"
   >
     <template #header>

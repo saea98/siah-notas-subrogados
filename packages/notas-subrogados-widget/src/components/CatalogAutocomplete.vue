@@ -14,6 +14,7 @@ const props = withDefaults(
     placeholder?: string;
     label?: string;
     minChars?: number;
+    disabled?: boolean;
   }>(),
   {
     apiPrefix: "",
@@ -21,6 +22,7 @@ const props = withDefaults(
     placeholder: "Escriba ≥2 caracteres…",
     label: "",
     minChars: 2,
+    disabled: false,
   },
 );
 
@@ -87,6 +89,7 @@ async function search(term: string) {
 }
 
 function onInput(v: string) {
+  if (props.disabled) return;
   q.value = v;
   emit("update:modelValue", v);
   open.value = true;
@@ -118,6 +121,7 @@ function onBlur() {
         icon="i-lucide-search"
         :loading="loading"
         :placeholder="placeholder"
+        :disabled="disabled"
         autocomplete="off"
         @update:model-value="onInput(String($event ?? ''))"
         @focus="open = true"
@@ -131,14 +135,15 @@ function onBlur() {
       icon="i-lucide-search"
       :loading="loading"
       :placeholder="placeholder"
+      :disabled="disabled"
       autocomplete="off"
       @update:model-value="onInput(String($event ?? ''))"
       @focus="open = true"
       @blur="onBlur"
     />
     <div
-      v-if="open && (items.length || error || loading)"
-      class="absolute z-20 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg"
+      v-if="!disabled && open && (items.length || error || loading)"
+      class="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-default bg-default shadow-lg"
     >
       <button
         v-for="item in items"

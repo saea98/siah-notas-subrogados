@@ -122,12 +122,20 @@ const consulta = reactive({
   analisis: "",
   plan: "",
   diai_clacie1: "",
+  diai_clacie2: "",
+  diai_clacie3: "",
   motivoCie10: "",
   motivoConsulta: "",
   diagnosticoTexto: "",
-  enfermedadPrimeraVez: false,
+  diagnosticoTexto2: "",
+  diagnosticoTexto3: "",
+  enfermedadPrimeraVez: true,
   enfermedadSub: false,
+  conn_tipocon: "P",
 });
+
+const notaBloqueada = ref(false);
+const dxSlotsVisible = ref(1);
 
 const notaCronica = reactive({
   diabetes: "negativo" as "negativo" | "positivo",
@@ -141,16 +149,40 @@ const procedimientosSel = ref<{ clave: string; descripcion: string }[]>([]);
 const procQ = ref("");
 
 function onPickCieMotivo(hit: { clave: string; descripcion: string }) {
+  if (notaBloqueada.value) return;
   consulta.motivoCie10 = hit.clave.slice(0, 5).toUpperCase();
   if (!consulta.motivoConsulta.trim()) consulta.motivoConsulta = hit.descripcion;
 }
 
-function onPickCieDx(hit: { clave: string; descripcion: string }) {
-  consulta.diai_clacie1 = hit.clave.slice(0, 5).toUpperCase();
-  consulta.diagnosticoTexto = hit.descripcion;
+function onPickCieDx(hit: { clave: string; descripcion: string }, slot = 1) {
+  if (notaBloqueada.value) return;
+  const clave = hit.clave.slice(0, 5).toUpperCase();
+  if (slot === 1) {
+    consulta.diai_clacie1 = clave;
+    consulta.diagnosticoTexto = hit.descripcion;
+  } else if (slot === 2) {
+    consulta.diai_clacie2 = clave;
+    consulta.diagnosticoTexto2 = hit.descripcion;
+  } else {
+    consulta.diai_clacie3 = clave;
+    consulta.diagnosticoTexto3 = hit.descripcion;
+  }
+}
+
+function setTipoConsulta(primeraVez: boolean) {
+  if (notaBloqueada.value) return;
+  consulta.enfermedadPrimeraVez = primeraVez;
+  consulta.enfermedadSub = !primeraVez;
+  consulta.conn_tipocon = primeraVez ? "P" : "S";
+}
+
+function agregarDiagnostico() {
+  if (notaBloqueada.value) return;
+  if (dxSlotsVisible.value < 3) dxSlotsVisible.value += 1;
 }
 
 function onPickProcedimiento(hit: { clave: string; descripcion: string }) {
+  if (notaBloqueada.value) return;
   if (procedimientosSel.value.some((p) => p.clave === hit.clave)) return;
   procedimientosSel.value.push({ clave: hit.clave, descripcion: hit.descripcion });
   procQ.value = "";
@@ -162,9 +194,11 @@ function onPickProcedimiento(hit: { clave: string; descripcion: string }) {
 }
 
 function quitarProcedimiento(clave: string) {
+  if (notaBloqueada.value) return;
   procedimientosSel.value = procedimientosSel.value.filter((p) => p.clave !== clave);
 }
 function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergias") {
+  if (notaBloqueada.value) return;
   notaCronica[campo] = notaCronica[campo] === "positivo" ? "negativo" : "positivo";
   if (campo === "alergias" && notaCronica.alergias === "negativo") {
     notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
@@ -173,6 +207,7 @@ function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergi
 }
 
 function syncCronicosEnAnalisis() {
+  if (notaBloqueada.value) return;
   const lineas = [
     `ANTECEDENTES CRONICOS: DIABETES ${notaCronica.diabetes.toUpperCase()}, ` +
       `HIPERTENSION ${notaCronica.hipertension.toUpperCase()}, ` +
@@ -180,21 +215,23 @@ function syncCronicosEnAnalisis() {
   ];
   if (notaCronica.alergias === "positivo") {
     const det = (notaCronica.alergiasDetalle || "").trim() || "ALERGIA REFERIDA";
-    lineas.push(det.startsWith("PACIENTE REFIERE") || det.startsWith("ALERGIAS") ? det : `PACIENTE REFIERE SER ALERGICO A ${det}`);
+    lineas.push(
+      det.startsWith("PACIENTE REFIERE") || det.startsWith("ALERGIAS")
+        ? det
+        : `PACIENTE REFIERE SER ALERGICO A ${det}`,
+    );
   } else {
     lineas.push("ALERGIAS NO REGISTRADAS");
   }
   const block = lineas.join("\n");
   const re = /ANTECEDENTES CRONICOS:[\s\S]*?(?=\n\n|$)/i;
   const analisis = (consulta.analisis || "").trim();
-  if (!analisis || analisis.toUpperCase().includes("ALERGIAS NO REGISTRADAS") || re.test(analisis)) {
-    if (re.test(analisis)) {
-      consulta.analisis = analisis.replace(re, block).trim();
-    } else if (!analisis || analisis.toUpperCase().includes("ALERGIAS")) {
-      consulta.analisis = block;
-    } else {
-      consulta.analisis = `${block}\n\n${analisis}`.trim();
-    }
+  if (re.test(analisis)) {
+    consulta.analisis = analisis.replace(re, block).trim();
+  } else if (!analisis) {
+    consulta.analisis = block;
+  } else {
+    consulta.analisis = `${block}\n\n${analisis}`.trim();
   }
 }
 
@@ -293,8 +330,7 @@ function formatSignosResumenLinea(s: {
   ].join(" ");
 }
 
-const SIGNOS_PLAN_RE =
-  /SIGNOS VITALES:[\s\S]*?(?=\n(?:RECETA|SOLICITUD|PROCEDIMIENTO)|$)/i;
+const SIGNOS_PLAN_RE = /SIGNOS VITALES:[^\n]*/i;
 
 function syncSignosEnPlan(resumen: string) {
   const block = resumen.trim();
@@ -307,7 +343,8 @@ function syncSignosEnPlan(resumen: string) {
   if (SIGNOS_PLAN_RE.test(plan)) {
     consulta.plan = plan.replace(SIGNOS_PLAN_RE, block).trim();
   } else {
-    consulta.plan = `${plan}\n\n${block}`.trim();
+    // Signos al final: el médico escribe el plan clínico arriba / al inicio.
+    consulta.plan = `${plan}\n${block}`.trim();
   }
 }
 
@@ -361,8 +398,7 @@ const consultaBloqueadaSinSignos = computed(
 
 /** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
 const SOAP_MIN_CHARS = 20;
-const SOAP_SIGNOS_PLAN_RE =
-  /SIGNOS VITALES:[\s\S]*?(?=\n(?:RECETA|SOLICITUD|PROCEDIMIENTO)|$)/i;
+const SOAP_SIGNOS_PLAN_RE = /SIGNOS VITALES:[^\n]*/i;
 
 function soapLen(text: string, stripSignos = false): number {
   let t = (text || "").trim();
@@ -930,8 +966,43 @@ function selectCita(row: Record<string, unknown>) {
     const esp = especialidades.value.find((e) => e.esps_espserv === citaCtx.esps_espserv);
     citaCtx.requiere_signos = esp?.requiere_signos === "N" ? "N" : "S";
   }
+  // Estatus 4 = atendida / nota grabada (legacy).
+  notaBloqueada.value = Number(row.cits_estatus) === 4;
   if (consultaLoadedFolio.value !== folio) {
     consultaLoadedFolio.value = 0;
+  }
+}
+
+async function loadNotaGrabada() {
+  if (!citaCtx.hosi_folio) return;
+  try {
+    const res = await post<{ record: Record<string, unknown> }>("/sub/atmed/consulta/detalle", {
+      ...props.session,
+      hosi_folio: citaCtx.hosi_folio,
+    });
+    const r = res.record || {};
+    if (!r.grabada) {
+      if (!notaBloqueada.value) return;
+      // Estatus 4 sin fila: igual bloquear escritura nueva.
+      return;
+    }
+    notaBloqueada.value = true;
+    consulta.sintomas = String(r.sintomas || "");
+    consulta.objetivo = String(r.objetivo || "");
+    consulta.analisis = String(r.analisis || "");
+    consulta.plan = String(r.plan || "");
+    consulta.diai_clacie1 = String(r.diai_clacie1 || "");
+    consulta.diai_clacie2 = String(r.diai_clacie2 || "");
+    consulta.diai_clacie3 = String(r.diai_clacie3 || "");
+    const tipocon = String(r.conn_tipocon || "P").toUpperCase().slice(0, 1);
+    consulta.conn_tipocon = tipocon || "P";
+    consulta.enfermedadPrimeraVez = tipocon !== "S";
+    consulta.enfermedadSub = tipocon === "S";
+    dxSlotsVisible.value = [consulta.diai_clacie1, consulta.diai_clacie2, consulta.diai_clacie3].filter(
+      Boolean,
+    ).length || 1;
+  } catch {
+    /* precarga sigue siendo usable */
   }
 }
 
@@ -977,25 +1048,29 @@ async function loadConsultaContext(force = false) {
     if (preData.edad) citaCtx.edad = String(preData.edad);
     if (preData.sexo) citaCtx.sexo = String(preData.sexo).startsWith("MASC") ? "M" : citaCtx.sexo;
 
-    consulta.sintomas = String(preData.sintomas || consulta.sintomas || "");
-    const cr = (preData.cronicos as Record<string, boolean>) || {};
-    notaCronica.diabetes = cr.diabetes ? "positivo" : "negativo";
-    notaCronica.hipertension = cr.hipertension ? "positivo" : "negativo";
-    notaCronica.obesidad = cr.obesidad ? "positivo" : "negativo";
-    const alergiasTxt = String(preData.alergias || preData.analisis || "");
-    notaCronica.alergiasDetalle = alergiasTxt;
-    notaCronica.alergias =
-      preData.alergiasRegistradas === true ||
-      (alergiasTxt && !alergiasTxt.toUpperCase().includes("NO REGISTRADAS"))
-        ? "positivo"
-        : "negativo";
-    if (!consulta.analisis.trim() && alergiasTxt) {
-      consulta.analisis = alergiasTxt;
+    await loadNotaGrabada();
+
+    if (!notaBloqueada.value) {
+      consulta.sintomas = String(preData.sintomas || consulta.sintomas || "");
+      const cr = (preData.cronicos as Record<string, boolean>) || {};
+      notaCronica.diabetes = cr.diabetes ? "positivo" : "negativo";
+      notaCronica.hipertension = cr.hipertension ? "positivo" : "negativo";
+      notaCronica.obesidad = cr.obesidad ? "positivo" : "negativo";
+      const alergiasTxt = String(preData.alergias || preData.analisis || "");
+      notaCronica.alergiasDetalle = alergiasTxt;
+      notaCronica.alergias =
+        preData.alergiasRegistradas === true ||
+        (alergiasTxt && !alergiasTxt.toUpperCase().includes("NO REGISTRADAS"))
+          ? "positivo"
+          : "negativo";
+      if (!consulta.analisis.trim() && alergiasTxt) {
+        consulta.analisis = alergiasTxt;
+      }
+      syncCronicosEnAnalisis();
     }
-    syncCronicosEnAnalisis();
     consultaLoadedFolio.value = citaCtx.hosi_folio;
     await loadUltimosSignos();
-    if (ultimosSignos.value && !SIGNOS_PLAN_RE.test(consulta.plan || "")) {
+    if (!notaBloqueada.value && ultimosSignos.value && !SIGNOS_PLAN_RE.test(consulta.plan || "")) {
       syncSignosEnPlan(formatSignosResumenLinea(ultimosSignos.value));
     }
     await loadRecetasConsulta();
@@ -1005,16 +1080,26 @@ async function loadConsultaContext(force = false) {
 }
 
 function limpiarConsulta() {
+  if (notaBloqueada.value) {
+    error.value = "La nota ya está grabada; no se puede limpiar ni modificar.";
+    return;
+  }
   consulta.sintomas = "";
   consulta.objetivo = "";
   consulta.analisis = "";
   consulta.plan = "";
   consulta.diai_clacie1 = "";
+  consulta.diai_clacie2 = "";
+  consulta.diai_clacie3 = "";
   consulta.motivoCie10 = "";
   consulta.motivoConsulta = "";
   consulta.diagnosticoTexto = "";
-  consulta.enfermedadPrimeraVez = false;
+  consulta.diagnosticoTexto2 = "";
+  consulta.diagnosticoTexto3 = "";
+  consulta.enfermedadPrimeraVez = true;
   consulta.enfermedadSub = false;
+  consulta.conn_tipocon = "P";
+  dxSlotsVisible.value = 1;
   consultaLoadedFolio.value = 0;
   notaCronica.diabetes = "negativo";
   notaCronica.hipertension = "negativo";
@@ -1068,6 +1153,10 @@ async function doConsulta() {
     error.value = "Seleccione una cita (folio)";
     return;
   }
+  if (notaBloqueada.value) {
+    error.value = "La nota clínica ya fue grabada y no se puede modificar.";
+    return;
+  }
   if (consultaBloqueadaSinSignos.value) {
     error.value =
       "Esta especialidad exige signos vitales antes de grabar la nota. Abra SIGNOS VITALES primero.";
@@ -1080,19 +1169,33 @@ async function doConsulta() {
     return;
   }
   syncCronicosEnAnalisis();
+  consulta.conn_tipocon = consulta.enfermedadSub ? "S" : "P";
   loading.value = true;
   error.value = "";
   try {
     const res = await post<{ mensaje: string }>("/sub/atmed/consulta", {
       ...props.session,
-      ...consulta,
+      hosi_folio: consulta.hosi_folio,
+      sintomas: consulta.sintomas,
+      objetivo: consulta.objetivo,
+      analisis: consulta.analisis,
+      plan: consulta.plan,
+      diai_clacie1: consulta.diai_clacie1,
+      diai_clacie2: consulta.diai_clacie2,
+      diai_clacie3: consulta.diai_clacie3,
+      conn_tipocon: consulta.conn_tipocon,
+      conn_tipoatn: "C",
       diabetes: notaCronica.diabetes === "positivo",
       hipertension: notaCronica.hipertension === "positivo",
       obesidad: notaCronica.obesidad === "positivo",
       alergias: notaCronica.alergias === "positivo",
-      alergias_texto: notaCronica.alergiasDetalle || consulta.analisis,
+      alergias_texto:
+        notaCronica.alergias === "positivo"
+          ? notaCronica.alergiasDetalle || "ALERGIA REFERIDA"
+          : "ALERGIAS NO REGISTRADAS",
     });
     okMsg.value = res.mensaje;
+    notaBloqueada.value = true;
     await load();
     await loadRecetasConsulta();
   } catch (e) {
@@ -1596,7 +1699,7 @@ onMounted(async () => {
               color="primary"
               size="sm"
               :loading="loading"
-              :disabled="!consulta.hosi_folio || consultaBloqueadaSinSignos || !soapCompleto"
+              :disabled="!consulta.hosi_folio || consultaBloqueadaSinSignos || !soapCompleto || notaBloqueada"
               @click="doConsulta"
             />
             <UButton
@@ -1729,13 +1832,16 @@ onMounted(async () => {
 
             <AtmedSectionCard title="Enfermedad crónico degenerativa">
               <p class="text-[0.7rem] text-muted m-0 mb-2">
-                Prellenado desde censo / antecedentes. Pulse el badge para marcar positivo o negativo;
-                se refleja en Análisis y se guarda al grabar la consulta.
+                Prellenado desde censo. Pulse el badge para marcar positivo/negativo (se refleja en
+                Análisis). Las alergias positivas guardan el detalle del textarea al grabar la
+                consulta.
+                <span v-if="notaBloqueada" class="font-semibold text-warning"> Nota grabada: solo lectura.</span>
               </p>
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <button
                   type="button"
                   class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
+                  :disabled="notaBloqueada"
                   @click="toggleCronico('diabetes')"
                 >
                   <span class="text-xs font-bold text-muted">DIABETES</span>
@@ -1750,6 +1856,7 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
+                  :disabled="notaBloqueada"
                   @click="toggleCronico('hipertension')"
                 >
                   <span class="text-xs font-bold text-muted">HIPERTENSIÓN</span>
@@ -1764,6 +1871,7 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
+                  :disabled="notaBloqueada"
                   @click="toggleCronico('obesidad')"
                 >
                   <span class="text-xs font-bold text-muted">OBESIDAD</span>
@@ -1778,6 +1886,7 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
+                  :disabled="notaBloqueada"
                   @click="toggleCronico('alergias')"
                 >
                   <span class="text-xs font-bold text-muted">ALERGIAS</span>
@@ -1801,7 +1910,8 @@ onMounted(async () => {
                   :rows="2"
                   class="w-full"
                   :ui="notaTextareaUi"
-                  @blur="syncCronicosEnAnalisis"
+                  :disabled="notaBloqueada"
+                  @update:model-value="syncCronicosEnAnalisis"
                 />
               </UFormField>
             </AtmedSectionCard>
@@ -1818,14 +1928,21 @@ onMounted(async () => {
                   tipo="cie10"
                   label="Buscar CIE-10 (motivo)"
                   placeholder="Clave o descripción…"
+                  :disabled="notaBloqueada"
                   @select="onPickCieMotivo"
                 />
                 <div class="grid gap-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
                   <UFormField label="CIE-10" class="w-full" :ui="notaFieldUi">
-                    <UInput v-model="consulta.motivoCie10" maxlength="5" size="sm" class="w-full uppercase" />
+                    <UInput
+                      v-model="consulta.motivoCie10"
+                      maxlength="5"
+                      size="sm"
+                      class="w-full uppercase"
+                      :disabled="notaBloqueada"
+                    />
                   </UFormField>
                   <UFormField label="Motivo de consulta" class="w-full min-w-0" :ui="notaFieldUi">
-                    <UInput v-model="consulta.motivoConsulta" size="sm" class="w-full" />
+                    <UInput v-model="consulta.motivoConsulta" size="sm" class="w-full" :disabled="notaBloqueada" />
                   </UFormField>
                 </div>
               </div>
@@ -1833,8 +1950,10 @@ onMounted(async () => {
 
             <AtmedSectionCard title="Nota clínica">
               <p class="text-[0.7rem] text-muted m-0 mb-2">
-                Mínimo {{ SOAP_MIN_CHARS }} caracteres en Síntomas, Objetivo, Análisis y Plan
-                (Plan no cuenta el bloque automático de signos).
+                Mínimo {{ SOAP_MIN_CHARS }} caracteres en Síntomas, Objetivo, Análisis y Plan.
+                En Plan puede escribir al inicio o al final; el bloque de una línea
+                <code>SIGNOS VITALES:…</code> no cuenta para el mínimo.
+                <span v-if="notaBloqueada" class="font-semibold text-warning"> Solo lectura.</span>
               </p>
               <div class="siah-nota-fields grid w-full gap-4 lg:grid-cols-2">
                 <UFormField
@@ -1850,6 +1969,7 @@ onMounted(async () => {
                     autoresize
                     class="w-full"
                     :ui="notaTextareaUi"
+                    :disabled="notaBloqueada"
                   />
                 </UFormField>
                 <UFormField
@@ -1865,6 +1985,7 @@ onMounted(async () => {
                     autoresize
                     class="w-full"
                     :ui="notaTextareaUi"
+                    :disabled="notaBloqueada"
                   />
                 </UFormField>
                 <UFormField
@@ -1880,6 +2001,7 @@ onMounted(async () => {
                     autoresize
                     class="w-full"
                     :ui="notaTextareaUi"
+                    :disabled="notaBloqueada"
                   />
                 </UFormField>
                 <UFormField
@@ -1895,6 +2017,7 @@ onMounted(async () => {
                     autoresize
                     class="w-full"
                     :ui="notaTextareaUi"
+                    :disabled="notaBloqueada"
                   />
                 </UFormField>
               </div>
@@ -1909,7 +2032,8 @@ onMounted(async () => {
                   tipo="cie10"
                   label="Buscar CIE-10 (diagnóstico)"
                   placeholder="Clave o descripción (≥2 caracteres)…"
-                  @select="onPickCieDx"
+                  :disabled="notaBloqueada"
+                  @select="onPickCieDx($event, dxSlotsVisible)"
                 />
                 <div class="flex flex-wrap items-end gap-3">
                   <UFormField label="CIE-10" class="w-24">
@@ -1919,15 +2043,62 @@ onMounted(async () => {
                       placeholder="Ej. R51X"
                       size="sm"
                       class="uppercase"
+                      :disabled="notaBloqueada"
                     />
                   </UFormField>
                   <UFormField label="Diagnóstico de consulta" class="min-w-0 flex-1">
-                    <UInput v-model="consulta.diagnosticoTexto" size="sm" />
+                    <UInput v-model="consulta.diagnosticoTexto" size="sm" :disabled="notaBloqueada" />
                   </UFormField>
                   <span class="text-xs font-bold text-muted pb-2">ENFERMEDAD</span>
-                  <UCheckbox v-model="consulta.enfermedadPrimeraVez" label="1a VEZ" />
-                  <UCheckbox v-model="consulta.enfermedadSub" label="SUB." />
-                  <UButton icon="i-lucide-plus" color="primary" variant="soft" size="sm" title="Agregar diagnóstico" />
+                  <UCheckbox
+                    :model-value="consulta.enfermedadPrimeraVez"
+                    label="1a VEZ"
+                    :disabled="notaBloqueada"
+                    @update:model-value="(v) => v && setTipoConsulta(true)"
+                  />
+                  <UCheckbox
+                    :model-value="consulta.enfermedadSub"
+                    label="SUB."
+                    :disabled="notaBloqueada"
+                    @update:model-value="(v) => v && setTipoConsulta(false)"
+                  />
+                  <UButton
+                    icon="i-lucide-plus"
+                    color="primary"
+                    variant="soft"
+                    size="sm"
+                    title="Agregar diagnóstico (máx. 3)"
+                    :disabled="notaBloqueada || dxSlotsVisible >= 3"
+                    @click="agregarDiagnostico"
+                  />
+                </div>
+                <div v-if="dxSlotsVisible >= 2" class="flex flex-wrap items-end gap-3">
+                  <UFormField label="CIE-10 (2)" class="w-24">
+                    <UInput
+                      v-model="consulta.diai_clacie2"
+                      maxlength="5"
+                      size="sm"
+                      class="uppercase"
+                      :disabled="notaBloqueada"
+                    />
+                  </UFormField>
+                  <UFormField label="Diagnóstico 2" class="min-w-0 flex-1">
+                    <UInput v-model="consulta.diagnosticoTexto2" size="sm" :disabled="notaBloqueada" />
+                  </UFormField>
+                </div>
+                <div v-if="dxSlotsVisible >= 3" class="flex flex-wrap items-end gap-3">
+                  <UFormField label="CIE-10 (3)" class="w-24">
+                    <UInput
+                      v-model="consulta.diai_clacie3"
+                      maxlength="5"
+                      size="sm"
+                      class="uppercase"
+                      :disabled="notaBloqueada"
+                    />
+                  </UFormField>
+                  <UFormField label="Diagnóstico 3" class="min-w-0 flex-1">
+                    <UInput v-model="consulta.diagnosticoTexto3" size="sm" :disabled="notaBloqueada" />
+                  </UFormField>
                 </div>
               </div>
             </AtmedSectionCard>
@@ -1943,6 +2114,7 @@ onMounted(async () => {
                 :session="session"
                 tipo="procedimientos"
                 placeholder="Buscar procedimiento…"
+                :disabled="notaBloqueada"
                 @select="onPickProcedimiento"
               />
               <ul v-if="procedimientosSel.length" class="mt-2 m-0 list-none space-y-1 p-0">
@@ -1959,6 +2131,7 @@ onMounted(async () => {
                     size="xs"
                     color="neutral"
                     variant="ghost"
+                    :disabled="notaBloqueada"
                     @click="quitarProcedimiento(p.clave)"
                   />
                 </li>
@@ -1972,7 +2145,7 @@ onMounted(async () => {
                 color="primary"
                 size="sm"
                 :loading="loading"
-                :disabled="consultaBloqueadaSinSignos || !soapCompleto"
+                :disabled="consultaBloqueadaSinSignos || !soapCompleto || notaBloqueada"
                 @click="doConsulta"
               />
             </div>
