@@ -280,10 +280,9 @@ function cancelar() {
 }
 
 function imprimir() {
-  const items = registradas.value.filter((r) => printIds.value.includes(r.id));
-  const fuente = items.length ? items : registradasFiltradas.value;
+  const fuente = registradas.value.filter((r) => printIds.value.includes(r.id));
   if (!fuente.length) {
-    error.value = "No hay solicitudes para imprimir";
+    error.value = "Seleccione al menos una solicitud";
     return;
   }
   const win = window.open("", "_blank", "noopener,noreferrer,width=800,height=700");

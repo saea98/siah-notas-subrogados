@@ -60,7 +60,7 @@ const medicos = ref<{ medc_ficha: string; medc_codigo: string; medc_nombre: stri
 const horas = ref<{ hora: number; label: string }[]>([]);
 
 const asignar = reactive({
-  ficha: "100001",
+  ficha: "",
   codigo: "00",
   empresa: 0,
   esps_espserv: 101,
@@ -71,6 +71,9 @@ const asignar = reactive({
   folioConsulta: "",
   observaciones: "",
 });
+const asignando = ref(false);
+const agendaAsignarPage = ref(1);
+const AGENDA_ASIGNAR_PAGE_SIZE = 10;
 
 const paciente = reactive({
   loading: false,
@@ -135,7 +138,11 @@ const consulta = reactive({
 });
 
 const notaBloqueada = ref(false);
+const consultaOkLocal = ref(false);
 const dxSlotsVisible = ref(1);
+const antecedentesVisitados = ref(false);
+const alergiasLista = ref<string[]>([]);
+const alergiaNueva = ref("");
 
 const notaCronica = reactive({
   diabetes: "negativo" as "negativo" | "positivo",
@@ -197,10 +204,49 @@ function quitarProcedimiento(clave: string) {
   if (notaBloqueada.value) return;
   procedimientosSel.value = procedimientosSel.value.filter((p) => p.clave !== clave);
 }
+function syncAlergiasDetalleFromLista() {
+  notaCronica.alergiasDetalle = alergiasLista.value.join("\n");
+}
+
+function agregarAlergia() {
+  if (notaBloqueada.value) return;
+  const t = alergiaNueva.value.trim();
+  if (!t) return;
+  if (!alergiasLista.value.some((a) => a.toLowerCase() === t.toLowerCase())) {
+    alergiasLista.value.push(t);
+  }
+  alergiaNueva.value = "";
+  syncAlergiasDetalleFromLista();
+  syncCronicosEnAnalisis();
+}
+
+function quitarAlergia(idx: number) {
+  if (notaBloqueada.value) return;
+  alergiasLista.value.splice(idx, 1);
+  syncAlergiasDetalleFromLista();
+  syncCronicosEnAnalisis();
+}
+
+function loadAlergiasListaFromTexto(txt: string) {
+  const lines = String(txt || "")
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((l) => {
+      const u = l.toUpperCase();
+      return !u.includes("NO REGISTRADAS") && !u.startsWith("ANTECEDENTES CRONICOS");
+    });
+  alergiasLista.value = lines;
+  syncAlergiasDetalleFromLista();
+}
+
 function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergias") {
   if (notaBloqueada.value) return;
+  antecedentesVisitados.value = true;
   notaCronica[campo] = notaCronica[campo] === "positivo" ? "negativo" : "positivo";
   if (campo === "alergias" && notaCronica.alergias === "negativo") {
+    alergiasLista.value = [];
+    alergiaNueva.value = "";
     notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
   }
   syncCronicosEnAnalisis();
@@ -395,6 +441,33 @@ const consultaBloqueadaSinSignos = computed(
     consultaRequiereSignos.value &&
     !consultaTieneSignos.value,
 );
+
+/** Alias UX: bloquea Síntomas/Objetivo igual que el gate de grabar. */
+const soapBloqueadoSinSignos = consultaBloqueadaSinSignos;
+
+const agendaAsignarTotalPages = computed(() =>
+  Math.max(1, Math.ceil(rows.value.length / AGENDA_ASIGNAR_PAGE_SIZE)),
+);
+
+const agendaAsignarPageRows = computed(() => {
+  const start = (agendaAsignarPage.value - 1) * AGENDA_ASIGNAR_PAGE_SIZE;
+  return rows.value.slice(start, start + AGENDA_ASIGNAR_PAGE_SIZE);
+});
+
+function citaYaLlego(row: Record<string, unknown> | null | undefined): boolean {
+  if (!row) return false;
+  return Number(row.cits_estatus) >= 2 || Number(row.cits_hrllegada) > 0;
+}
+
+const llegadaDisabled = computed(() => {
+  if (!selectedAgendaRow.value) return true;
+  return citaYaLlego(selectedAgendaRow.value);
+});
+
+const iniciarAtencionDisabled = computed(() => {
+  if (!selectedAgendaRow.value) return true;
+  return !citaYaLlego(selectedAgendaRow.value);
+});
 
 /** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
 const SOAP_MIN_CHARS = 20;
@@ -701,8 +774,49 @@ function selectAgendaRow(row: Record<string, unknown>) {
 
 function openConsultaFromAgenda(row: Record<string, unknown>) {
   selectAgendaRow(row);
+  if (!citaYaLlego(row)) {
+    error.value = "Registre la llegada del paciente antes de iniciar la atención médica";
+    okMsg.value = "";
+    return;
+  }
+  consultaOkLocal.value = false;
   tab.value = "consulta";
   void loadConsultaContext(true);
+}
+
+function imprimirAgenda() {
+  if (!rows.value.length) {
+    error.value = "No hay citas para imprimir en esta fecha";
+    return;
+  }
+  const win = window.open("", "_blank", "noopener,noreferrer,width=960,height=720");
+  if (!win) {
+    error.value = "El navegador bloqueó la ventana de impresión";
+    return;
+  }
+  const rowsHtml = rows.value
+    .map(
+      (r, i) =>
+        `<tr>
+          <td>${i + 1}</td>
+          <td>${r.hosi_folio ?? ""}</td>
+          <td>${formatHoraCelda(r.citn_hrcita)}</td>
+          <td>${formatHoraCelda(r.cits_hrllegada) || "—"}</td>
+          <td>${r.derc_ficha ?? ""}</td>
+          <td>${r.paciente ?? ""}</td>
+          <td>${r.especialidad ?? "—"}</td>
+        </tr>`,
+    )
+    .join("");
+  win.document.write(`<!doctype html><html><head><title>Agenda médica ${fecha.value}</title>
+    <style>body{font-family:sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px}
+    th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eee}</style></head>
+    <body><h2>Agenda médica · ${fecha.value}</h2>
+    <table><thead><tr><th>No</th><th>Folio</th><th>Cita</th><th>Llegó</th><th>Ficha</th><th>Paciente</th><th>Especialidad</th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table></body></html>`);
+  win.document.close();
+  win.focus();
+  win.print();
 }
 
 function openExpedienteFromAgenda(row: Record<string, unknown>) {
@@ -725,6 +839,10 @@ function requireSelectedAgenda(action: string): Record<string, unknown> | null {
 async function llegadaSelected() {
   const row = requireSelectedAgenda("registrar llegada");
   if (!row) return;
+  if (citaYaLlego(row)) {
+    error.value = "La llegada ya fue registrada para esta cita";
+    return;
+  }
   await llegada(Number(row.hosi_folio));
 }
 
@@ -818,6 +936,9 @@ async function loadPaciente() {
 }
 
 function limpiarAsignar() {
+  asignar.ficha = "";
+  asignar.codigo = "00";
+  asignar.empresa = 0;
   asignar.folioConsulta = "";
   asignar.observaciones = "";
   clearPaciente();
@@ -825,8 +946,17 @@ function limpiarAsignar() {
   okMsg.value = "";
 }
 
+function partialClearAsignar() {
+  asignar.observaciones = "";
+  asignar.ficha = "";
+  asignar.codigo = "00";
+  asignar.empresa = 0;
+  clearPaciente();
+}
+
 async function loadAgendaAsignar() {
   fecha.value = asignar.fecha;
+  agendaAsignarPage.value = 1;
   await load();
 }
 
@@ -908,6 +1038,8 @@ async function llegada(folio: number) {
     await post("/sub/atmed/llegada", { ...props.session, hosi_folio: folio });
     okMsg.value = "Llegada registrada";
     await load();
+    const updated = rows.value.find((r) => Number(r.hosi_folio) === folio);
+    if (updated) selectedAgendaRow.value = updated;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error registrando llegada";
   } finally {
@@ -916,14 +1048,34 @@ async function llegada(folio: number) {
 }
 
 async function doAsignar() {
-  loading.value = true;
+  if (asignando.value) return;
   error.value = "";
   okMsg.value = "";
+  const ficha = asignar.ficha.trim();
+  const codigo = (asignar.codigo || "00").trim();
+  if (!ficha) {
+    error.value = "Capture ficha/código/empresa y pulse Buscar";
+    return;
+  }
+  const dup = rows.value.some(
+    (r) =>
+      String(r.derc_ficha || "").trim() === ficha &&
+      String(r.derc_codigo || "00").trim() === codigo &&
+      Number(r.esps_espserv || 0) === Number(asignar.esps_espserv) &&
+      Number(r.citn_hrcita || 0) === Number(asignar.hora),
+  );
+  if (dup) {
+    error.value =
+      "Ya existe una cita para este paciente, especialidad y hora en la fecha seleccionada";
+    return;
+  }
+  asignando.value = true;
+  loading.value = true;
   try {
     const res = await post<{ mensaje: string; record?: { hosi_folio: number } }>("/sub/atmed/asignar", {
       ...props.session,
-      ficha: asignar.ficha,
-      codigo: asignar.codigo,
+      ficha,
+      codigo,
       empresa: asignar.empresa,
       esps_espserv: asignar.esps_espserv,
       medc_ficha: asignar.medc_ficha,
@@ -934,6 +1086,7 @@ async function doAsignar() {
     });
     okMsg.value = res.mensaje + (res.record ? ` · folio ${res.record.hosi_folio}` : "");
     if (res.record?.hosi_folio) asignar.folioConsulta = String(res.record.hosi_folio);
+    partialClearAsignar();
     fecha.value = asignar.fecha;
     await loadAgendaAsignar();
     await loadHoras();
@@ -941,6 +1094,7 @@ async function doAsignar() {
     error.value = e instanceof Error ? e.message : "Error al asignar";
   } finally {
     loading.value = false;
+    asignando.value = false;
   }
 }
 
@@ -1057,16 +1211,24 @@ async function loadConsultaContext(force = false) {
       notaCronica.hipertension = cr.hipertension ? "positivo" : "negativo";
       notaCronica.obesidad = cr.obesidad ? "positivo" : "negativo";
       const alergiasTxt = String(preData.alergias || preData.analisis || "");
-      notaCronica.alergiasDetalle = alergiasTxt;
       notaCronica.alergias =
         preData.alergiasRegistradas === true ||
         (alergiasTxt && !alergiasTxt.toUpperCase().includes("NO REGISTRADAS"))
           ? "positivo"
           : "negativo";
+      if (notaCronica.alergias === "positivo") {
+        loadAlergiasListaFromTexto(alergiasTxt);
+      } else {
+        alergiasLista.value = [];
+        notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
+      }
+      antecedentesVisitados.value = true;
       if (!consulta.analisis.trim() && alergiasTxt) {
         consulta.analisis = alergiasTxt;
       }
       syncCronicosEnAnalisis();
+    } else {
+      antecedentesVisitados.value = true;
     }
     consultaLoadedFolio.value = citaCtx.hosi_folio;
     await loadUltimosSignos();
@@ -1084,6 +1246,7 @@ function limpiarConsulta() {
     error.value = "La nota ya está grabada; no se puede limpiar ni modificar.";
     return;
   }
+  consultaOkLocal.value = false;
   consulta.sintomas = "";
   consulta.objetivo = "";
   consulta.analisis = "";
@@ -1106,6 +1269,9 @@ function limpiarConsulta() {
   notaCronica.obesidad = "negativo";
   notaCronica.alergias = "negativo";
   notaCronica.alergiasDetalle = "";
+  alergiasLista.value = [];
+  alergiaNueva.value = "";
+  antecedentesVisitados.value = false;
   procedimientosSel.value = [];
   procQ.value = "";
 }
@@ -1168,6 +1334,7 @@ async function doConsulta() {
       `(Plan sin contar el bloque automático de signos). Faltan: ${soapFaltantes.value.join(", ")}`;
     return;
   }
+  syncAlergiasDetalleFromLista();
   syncCronicosEnAnalisis();
   consulta.conn_tipocon = consulta.enfermedadSub ? "S" : "P";
   loading.value = true;
@@ -1191,10 +1358,11 @@ async function doConsulta() {
       alergias: notaCronica.alergias === "positivo",
       alergias_texto:
         notaCronica.alergias === "positivo"
-          ? notaCronica.alergiasDetalle || "ALERGIA REFERIDA"
+          ? alergiasLista.value.join("\n") || notaCronica.alergiasDetalle || "ALERGIA REFERIDA"
           : "ALERGIAS NO REGISTRADAS",
     });
     okMsg.value = res.mensaje;
+    consultaOkLocal.value = true;
     notaBloqueada.value = true;
     await load();
     await loadRecetasConsulta();
@@ -1208,6 +1376,22 @@ async function doConsulta() {
 async function doSignos() {
   if (!signos.hosi_folio) {
     error.value = "Seleccione una cita (folio)";
+    return;
+  }
+  const required: [keyof typeof signos, string][] = [
+    ["pulso", "Pulso"],
+    ["respiracion", "Respiración"],
+    ["tension_sis", "Tensión sistólica"],
+    ["tension_dia", "Tensión diastólica"],
+    ["temperatura", "Temperatura"],
+    ["peso", "Peso"],
+    ["estatura", "Estatura"],
+  ];
+  const faltantes = required
+    .filter(([key]) => !String(signos[key] ?? "").trim())
+    .map(([, label]) => label);
+  if (faltantes.length) {
+    error.value = `Signos incompletos: capture ${faltantes.join(", ")}`;
     return;
   }
   loading.value = true;
@@ -1245,13 +1429,6 @@ watch(
 );
 
 watch(
-  () => [asignar.ficha, asignar.codigo],
-  () => {
-    if (tab.value === "asignar") loadPaciente();
-  },
-);
-
-watch(
   () => fecha.value,
   (v) => {
     calMonth.value = v.slice(0, 7);
@@ -1263,9 +1440,9 @@ watch(tab, async (t) => {
   if (t === "asignar") {
     asignar.fecha = fecha.value;
     await loadAgendaAsignar();
-    await loadPaciente();
   }
   if (t === "consulta") {
+    consultaOkLocal.value = false;
     await loadConsultaContext();
   }
 });
@@ -1321,7 +1498,7 @@ onMounted(async () => {
             variant="soft"
             size="xs"
             block
-            :disabled="loading"
+            :disabled="loading || llegadaDisabled"
             @click="llegadaSelected"
           />
           <UButton
@@ -1387,14 +1564,25 @@ onMounted(async () => {
                 {{ tiempoConsultaProm }} (HORAS:MINUTOS)
               </p>
             </div>
-            <UButton
-              label="VERIFICA CITAS"
-              icon="i-lucide-refresh-cw"
-              color="primary"
-              size="sm"
-              :loading="loading"
-              @click="load"
-            />
+            <div class="flex flex-wrap items-center gap-2">
+              <UButton
+                label="VERIFICA CITAS"
+                icon="i-lucide-refresh-cw"
+                color="primary"
+                size="sm"
+                :loading="loading"
+                @click="load"
+              />
+              <UButton
+                label="Imprimir agenda"
+                icon="i-lucide-printer"
+                color="neutral"
+                variant="soft"
+                size="sm"
+                :disabled="!rows.length"
+                @click="imprimirAgenda"
+              />
+            </div>
           </div>
 
           <div class="siah-agenda-table-wrap siah-agenda-table-wrap--full">
@@ -1451,11 +1639,11 @@ onMounted(async () => {
               @click="selectedAgendaRow && openExpedienteFromAgenda(selectedAgendaRow)"
             />
             <UButton
-              label="Abrir consulta"
+              label="Iniciar atención médica"
               variant="link"
               color="primary"
               size="sm"
-              :disabled="!selectedAgendaRow"
+              :disabled="iniciarAtencionDisabled"
               @click="selectedAgendaRow && openConsultaFromAgenda(selectedAgendaRow)"
             />
             <span class="text-xs text-muted ml-auto">{{ rows.length }} cita(s) · unidad {{ session.unitrab }}</span>
@@ -1479,8 +1667,7 @@ onMounted(async () => {
         <!-- Formulario izquierdo -->
         <section class="siah-asigna-form">
           <div class="flex justify-end gap-2 mb-3">
-            <UButton label="LIMPIAR" color="neutral" variant="outline" size="sm" :disabled="loading" @click="limpiarAsignar" />
-            <UButton label="GRABA CITA" color="primary" size="sm" :loading="loading" @click="doAsignar" />
+            <UButton label="LIMPIAR" color="neutral" variant="outline" size="sm" :disabled="loading || asignando" @click="limpiarAsignar" />
           </div>
 
           <div class="siah-field-row siah-field-row--esp">
@@ -1531,17 +1718,34 @@ onMounted(async () => {
 
           <div class="siah-paciente-block">
             <div class="siah-paciente-fields">
+              <p class="siah-hint mb-1">Capture ficha/código/empresa y pulse Buscar</p>
               <div class="siah-field-row">
                 <label class="siah-label siah-label--sm">FICHA</label>
-                <input v-model="asignar.ficha" class="siah-input siah-input--ficha" @blur="loadPaciente" />
+                <input
+                  v-model="asignar.ficha"
+                  class="siah-input siah-input--ficha"
+                  @keydown.enter.prevent="loadPaciente"
+                />
                 <label class="siah-label siah-label--xs">COD</label>
-                <input v-model="asignar.codigo" class="siah-input siah-input--cod" @blur="loadPaciente" />
+                <input
+                  v-model="asignar.codigo"
+                  class="siah-input siah-input--cod"
+                  @keydown.enter.prevent="loadPaciente"
+                />
                 <label class="siah-label siah-label--xs">EMP</label>
                 <input
                   v-model.number="asignar.empresa"
                   type="number"
                   class="siah-input siah-input--emp"
-                  @blur="loadPaciente"
+                  @keydown.enter.prevent="loadPaciente"
+                />
+                <UButton
+                  label="Buscar"
+                  icon="i-lucide-search"
+                  color="primary"
+                  size="xs"
+                  :loading="paciente.loading"
+                  @click="loadPaciente"
                 />
                 <label class="siah-label">NOMBRE</label>
                 <input
@@ -1631,7 +1835,7 @@ onMounted(async () => {
           </div>
 
           <div class="siah-field-row siah-field-row--folio">
-            <label class="siah-label">FOLIO CONSULTA</label>
+            <label class="siah-label">Folio de cita médica</label>
             <input v-model="asignar.folioConsulta" class="siah-input siah-input--folio" />
             <span v-if="!asignar.folioConsulta" class="siah-hint">Ingresa No Folio.</span>
           </div>
@@ -1639,6 +1843,17 @@ onMounted(async () => {
           <div class="siah-field-row siah-field-row--obs">
             <label class="siah-label siah-label--top">OBSERVACIONES</label>
             <textarea v-model="asignar.observaciones" class="siah-textarea" rows="4" />
+          </div>
+
+          <div class="flex justify-end gap-2 mt-3">
+            <UButton
+              label="GRABA CITA"
+              color="primary"
+              size="sm"
+              :loading="asignando || loading"
+              :disabled="asignando"
+              @click="doAsignar"
+            />
           </div>
         </section>
 
@@ -1664,14 +1879,14 @@ onMounted(async () => {
                   <td colspan="5" class="siah-agenda-empty">Sin citas para esta fecha</td>
                 </tr>
                 <tr
-                  v-for="(row, idx) in rows"
+                  v-for="(row, idx) in agendaAsignarPageRows"
                   v-else
                   :key="String(row.hosi_folio)"
                   :class="citaStatusClass(row.cits_estatus)"
                   class="siah-agenda-row"
                   @click="usarCitaEnAsignar(row)"
                 >
-                  <td>{{ idx + 1 }}</td>
+                  <td>{{ (agendaAsignarPage - 1) * AGENDA_ASIGNAR_PAGE_SIZE + idx + 1 }}</td>
                   <td>{{ row.hosi_folio }}</td>
                   <td>{{ formatHora(row.citn_hrcita) }}</td>
                   <td>{{ row.derc_ficha }}</td>
@@ -1679,6 +1894,25 @@ onMounted(async () => {
                 </tr>
               </tbody>
             </table>
+          </div>
+          <div v-if="rows.length > AGENDA_ASIGNAR_PAGE_SIZE" class="flex items-center justify-center gap-2 py-2">
+            <UButton
+              label="Anterior"
+              size="xs"
+              color="neutral"
+              variant="soft"
+              :disabled="agendaAsignarPage <= 1"
+              @click="agendaAsignarPage = Math.max(1, agendaAsignarPage - 1)"
+            />
+            <span class="text-xs text-muted">{{ agendaAsignarPage }} / {{ agendaAsignarTotalPages }}</span>
+            <UButton
+              label="Siguiente"
+              size="xs"
+              color="neutral"
+              variant="soft"
+              :disabled="agendaAsignarPage >= agendaAsignarTotalPages"
+              @click="agendaAsignarPage = Math.min(agendaAsignarTotalPages, agendaAsignarPage + 1)"
+            />
           </div>
           <div class="siah-agenda-leyenda">
             <span class="siah-leyenda-item siah-leyenda-item--confirmar">POR CONFIRMAR</span>
@@ -1693,15 +1927,7 @@ onMounted(async () => {
         <div v-else-if="tab === 'consulta'" class="flex flex-col gap-3 min-w-0">
           <p class="text-xs font-semibold uppercase text-primary m-0">{{ consultaStatusLine }}</p>
 
-          <div class="flex flex-wrap gap-2">
-            <UButton
-              label="GRABA CONSULTA"
-              color="primary"
-              size="sm"
-              :loading="loading"
-              :disabled="!consulta.hosi_folio || consultaBloqueadaSinSignos || !soapCompleto || notaBloqueada"
-              @click="doConsulta"
-            />
+          <div class="flex flex-wrap items-center gap-2">
             <UButton
               label="SIGNOS VITALES"
               color="primary"
@@ -1710,33 +1936,27 @@ onMounted(async () => {
               :disabled="!consulta.hosi_folio"
               @click="openSignosModal"
             />
-            <UButton
-              label="RECETA"
-              color="primary"
-              variant="soft"
+            <UBadge
+              :color="antecedentesVisitados ? 'success' : 'neutral'"
+              variant="subtle"
               size="sm"
-              icon="i-lucide-pill"
-              :disabled="!consulta.hosi_folio"
-              @click="openRecetaConsulta"
-            />
-            <UButton
-              label="SOLICITUDES"
-              color="primary"
-              variant="soft"
+            >
+              Antecedentes {{ antecedentesVisitados ? "OK" : "pendiente" }}
+            </UBadge>
+            <UBadge
+              :color="!consultaRequiereSignos || consultaTieneSignos ? 'success' : 'warning'"
+              variant="subtle"
               size="sm"
-              icon="i-lucide-flask-conical"
-              :disabled="!consulta.hosi_folio"
-              @click="openServiciosModal"
-            />
-            <UButton
-              label="EXPEDIENTE"
-              color="neutral"
-              variant="outline"
-              size="sm"
-              icon="i-lucide-folder-open"
-              :disabled="!citaCtx.ficha"
-              @click="openExpedienteConsulta"
-            />
+            >
+              Signos
+              {{
+                !consultaRequiereSignos
+                  ? "N/A"
+                  : consultaTieneSignos
+                    ? "OK"
+                    : "pendiente"
+              }}
+            </UBadge>
           </div>
 
           <UAlert
@@ -1744,7 +1964,7 @@ onMounted(async () => {
             color="warning"
             variant="subtle"
             title="Signos vitales requeridos"
-            description="Esta especialidad exige registrar signos del folio antes de grabar la nota clínica (odontología y excepciones quedan exentas)."
+            description="Esta especialidad exige registrar signos del folio antes de capturar Síntomas/Objetivo y grabar la nota clínica (odontología y excepciones quedan exentas)."
           />
 
           <UAlert
@@ -1833,8 +2053,7 @@ onMounted(async () => {
             <AtmedSectionCard title="Enfermedad crónico degenerativa">
               <p class="text-[0.7rem] text-muted m-0 mb-2">
                 Prellenado desde censo. Pulse el badge para marcar positivo/negativo (se refleja en
-                Análisis). Las alergias positivas guardan el detalle del textarea al grabar la
-                consulta.
+                Análisis). Las alergias positivas se capturan como lista al grabar la consulta.
                 <span v-if="notaBloqueada" class="font-semibold text-warning"> Nota grabada: solo lectura.</span>
               </p>
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1899,21 +2118,46 @@ onMounted(async () => {
                   </UBadge>
                 </button>
               </div>
-              <UFormField
-                v-if="notaCronica.alergias === 'positivo'"
-                label="Detalle de alergias"
-                class="mt-3 w-full"
-                :ui="notaFieldUi"
-              >
-                <UTextarea
-                  v-model="notaCronica.alergiasDetalle"
-                  :rows="2"
-                  class="w-full"
-                  :ui="notaTextareaUi"
-                  :disabled="notaBloqueada"
-                  @update:model-value="syncCronicosEnAnalisis"
-                />
-              </UFormField>
+              <div v-if="notaCronica.alergias === 'positivo'" class="mt-3 space-y-2">
+                <p class="text-[0.7rem] font-semibold text-muted m-0">Detalle de alergias</p>
+                <div class="flex flex-wrap items-end gap-2">
+                  <UFormField label="Agregar alergia" class="min-w-0 flex-1" :ui="notaFieldUi">
+                    <UInput
+                      v-model="alergiaNueva"
+                      size="sm"
+                      class="w-full min-w-0"
+                      :disabled="notaBloqueada"
+                      placeholder="Ej. penicilina"
+                      @keydown.enter.prevent="agregarAlergia"
+                    />
+                  </UFormField>
+                  <UButton
+                    label="Agregar"
+                    color="primary"
+                    size="sm"
+                    :disabled="notaBloqueada || !alergiaNueva.trim()"
+                    @click="agregarAlergia"
+                  />
+                </div>
+                <ul v-if="alergiasLista.length" class="m-0 list-none space-y-1 p-0">
+                  <li
+                    v-for="(a, idx) in alergiasLista"
+                    :key="`${a}-${idx}`"
+                    class="flex items-center justify-between gap-2 rounded-md border border-default px-2 py-1 text-xs"
+                  >
+                    <span>{{ a }}</span>
+                    <UButton
+                      icon="i-lucide-x"
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      :disabled="notaBloqueada"
+                      @click="quitarAlergia(idx)"
+                    />
+                  </li>
+                </ul>
+                <p v-else class="text-[0.7rem] text-muted m-0">Agregue al menos una alergia.</p>
+              </div>
             </AtmedSectionCard>
 
             <AtmedSectionCard title="Motivo de consulta">
@@ -1942,7 +2186,12 @@ onMounted(async () => {
                     />
                   </UFormField>
                   <UFormField label="Motivo de consulta" class="w-full min-w-0" :ui="notaFieldUi">
-                    <UInput v-model="consulta.motivoConsulta" size="sm" class="w-full" :disabled="notaBloqueada" />
+                    <UInput
+                      v-model="consulta.motivoConsulta"
+                      size="sm"
+                      class="w-full min-w-0"
+                      :disabled="notaBloqueada"
+                    />
                   </UFormField>
                 </div>
               </div>
@@ -1954,6 +2203,12 @@ onMounted(async () => {
                 En Plan puede escribir al inicio o al final; el bloque de una línea
                 <code>SIGNOS VITALES:…</code> no cuenta para el mínimo.
                 <span v-if="notaBloqueada" class="font-semibold text-warning"> Solo lectura.</span>
+              </p>
+              <p
+                v-if="soapBloqueadoSinSignos"
+                class="text-[0.7rem] text-warning font-semibold m-0 mb-2"
+              >
+                Capture signos vitales antes de editar Síntomas y Objetivo.
               </p>
               <div class="siah-nota-fields grid w-full gap-4 lg:grid-cols-2">
                 <UFormField
@@ -1969,7 +2224,7 @@ onMounted(async () => {
                     autoresize
                     class="w-full"
                     :ui="notaTextareaUi"
-                    :disabled="notaBloqueada"
+                    :disabled="notaBloqueada || soapBloqueadoSinSignos"
                   />
                 </UFormField>
                 <UFormField
@@ -1985,7 +2240,7 @@ onMounted(async () => {
                     autoresize
                     class="w-full"
                     :ui="notaTextareaUi"
-                    :disabled="notaBloqueada"
+                    :disabled="notaBloqueada || soapBloqueadoSinSignos"
                   />
                 </UFormField>
                 <UFormField
@@ -2046,8 +2301,13 @@ onMounted(async () => {
                       :disabled="notaBloqueada"
                     />
                   </UFormField>
-                  <UFormField label="Diagnóstico de consulta" class="min-w-0 flex-1">
-                    <UInput v-model="consulta.diagnosticoTexto" size="sm" :disabled="notaBloqueada" />
+                  <UFormField label="Diagnóstico de consulta" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
+                    <UInput
+                      v-model="consulta.diagnosticoTexto"
+                      size="sm"
+                      class="w-full min-w-0"
+                      :disabled="notaBloqueada"
+                    />
                   </UFormField>
                   <span class="text-xs font-bold text-muted pb-2">ENFERMEDAD</span>
                   <UCheckbox
@@ -2082,8 +2342,13 @@ onMounted(async () => {
                       :disabled="notaBloqueada"
                     />
                   </UFormField>
-                  <UFormField label="Diagnóstico 2" class="min-w-0 flex-1">
-                    <UInput v-model="consulta.diagnosticoTexto2" size="sm" :disabled="notaBloqueada" />
+                  <UFormField label="Diagnóstico 2" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
+                    <UInput
+                      v-model="consulta.diagnosticoTexto2"
+                      size="sm"
+                      class="w-full min-w-0"
+                      :disabled="notaBloqueada"
+                    />
                   </UFormField>
                 </div>
                 <div v-if="dxSlotsVisible >= 3" class="flex flex-wrap items-end gap-3">
@@ -2096,8 +2361,13 @@ onMounted(async () => {
                       :disabled="notaBloqueada"
                     />
                   </UFormField>
-                  <UFormField label="Diagnóstico 3" class="min-w-0 flex-1">
-                    <UInput v-model="consulta.diagnosticoTexto3" size="sm" :disabled="notaBloqueada" />
+                  <UFormField label="Diagnóstico 3" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
+                    <UInput
+                      v-model="consulta.diagnosticoTexto3"
+                      size="sm"
+                      class="w-full min-w-0"
+                      :disabled="notaBloqueada"
+                    />
                   </UFormField>
                 </div>
               </div>
@@ -2138,8 +2408,63 @@ onMounted(async () => {
               </ul>
             </AtmedSectionCard>
 
+            <AtmedSectionCard title="Acciones complementarias">
+              <div class="flex flex-wrap gap-2">
+                <UButton
+                  label="RECETA"
+                  color="primary"
+                  variant="soft"
+                  size="sm"
+                  icon="i-lucide-pill"
+                  :disabled="!consulta.hosi_folio"
+                  @click="openRecetaConsulta"
+                />
+                <UButton
+                  label="SOLICITUDES"
+                  color="primary"
+                  variant="soft"
+                  size="sm"
+                  icon="i-lucide-flask-conical"
+                  :disabled="!consulta.hosi_folio"
+                  @click="openServiciosModal"
+                />
+                <UButton
+                  label="EXPEDIENTE"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  icon="i-lucide-folder-open"
+                  :disabled="!citaCtx.ficha"
+                  @click="openExpedienteConsulta"
+                />
+                <UButton
+                  label="Plan Nutricional"
+                  color="success"
+                  variant="soft"
+                  size="sm"
+                  disabled
+                  title="Próximamente"
+                />
+              </div>
+            </AtmedSectionCard>
+
+            <UAlert
+              v-if="consultaOkLocal || notaBloqueada"
+              color="success"
+              variant="subtle"
+              class="sticky bottom-2 z-10"
+              title="Consulta guardada — la nota queda en solo lectura."
+            />
+
             <div class="flex justify-end gap-2 pt-1">
-              <UButton label="LIMPIAR" color="neutral" variant="outline" size="sm" @click="limpiarConsulta" />
+              <UButton
+                label="LIMPIAR"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :disabled="notaBloqueada"
+                @click="limpiarConsulta"
+              />
               <UButton
                 label="GRABA CONSULTA"
                 color="primary"

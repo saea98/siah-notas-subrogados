@@ -49,19 +49,11 @@ const emit = defineEmits<{
     <template #content>
       <div class="flex flex-col max-h-[min(92vh,90vh)]">
         <div
-          class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-default bg-elevated px-4 py-3"
+          class="flex shrink-0 flex-wrap items-center justify-center gap-2 border-b border-default bg-elevated px-4 py-3"
         >
-          <UButton
-            label="GRABA SIGNOS"
-            color="primary"
-            size="sm"
-            :loading="loading"
-            @click="emit('graba')"
-          />
           <h2 id="siah-signos-title" class="text-sm font-bold uppercase tracking-wide text-highlighted">
             Registro de signos vitales
           </h2>
-          <UButton label="Plan Nutricional" color="success" variant="soft" size="sm" disabled />
         </div>
 
         <p class="shrink-0 border-b border-default px-4 py-2 text-xs font-semibold uppercase text-primary">
@@ -81,13 +73,13 @@ const emit = defineEmits<{
             </template>
 
             <div class="grid gap-2">
-              <UFormField label="Pulso">
+              <UFormField label="Pulso *" required>
                 <UInput v-model="signos.pulso" inputmode="numeric" size="sm" />
               </UFormField>
-              <UFormField label="Resp x min">
+              <UFormField label="Resp x min *" required>
                 <UInput v-model="signos.respiracion" inputmode="numeric" size="sm" />
               </UFormField>
-              <UFormField label="Tensión arterial">
+              <UFormField label="Tensión arterial *" required>
                 <div class="flex items-center gap-2">
                   <UInput v-model="signos.tension_sis" inputmode="numeric" size="sm" class="flex-1" />
                   <span class="text-muted">/</span>
@@ -107,13 +99,13 @@ const emit = defineEmits<{
                   }"
                 />
               </UFormField>
-              <UFormField label="Temp (°C)">
+              <UFormField label="Temp (°C) *" required>
                 <UInput v-model="signos.temperatura" inputmode="decimal" size="sm" />
               </UFormField>
-              <UFormField label="Peso (kg)">
+              <UFormField label="Peso (kg) *" required>
                 <UInput v-model="signos.peso" inputmode="decimal" size="sm" />
               </UFormField>
-              <UFormField label="Estatura (m)">
+              <UFormField label="Estatura (m) *" required>
                 <UInput v-model="signos.estatura" inputmode="decimal" size="sm" />
               </UFormField>
               <UFormField label="I.M.C">
@@ -211,7 +203,14 @@ const emit = defineEmits<{
           </UCard>
         </div>
 
-        <div class="flex justify-center border-t border-default px-4 py-3">
+        <div class="flex flex-wrap justify-center gap-2 border-t border-default px-4 py-3">
+          <UButton
+            label="GRABA SIGNOS"
+            color="primary"
+            size="sm"
+            :loading="loading"
+            @click="emit('graba')"
+          />
           <UButton label="Salir" variant="outline" color="neutral" @click="emit('close')" />
         </div>
       </div>
