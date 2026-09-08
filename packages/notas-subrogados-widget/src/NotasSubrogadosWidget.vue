@@ -72,6 +72,10 @@ const asignar = reactive({
   observaciones: "",
 });
 const asignando = ref(false);
+const pacienteBuscado = ref(false);
+const citasPaciente = ref<Record<string, unknown>[]>([]);
+const asignarOkFolio = ref("");
+const buscarHint = ref("Ingrese los datos del paciente para buscarlo en el sistema.");
 const agendaAsignarPage = ref(1);
 const AGENDA_ASIGNAR_PAGE_SIZE = 10;
 
@@ -452,6 +456,71 @@ const agendaAsignarTotalPages = computed(() =>
 const agendaAsignarPageRows = computed(() => {
   const start = (agendaAsignarPage.value - 1) * AGENDA_ASIGNAR_PAGE_SIZE;
   return rows.value.slice(start, start + AGENDA_ASIGNAR_PAGE_SIZE);
+});
+
+const hoyIso = computed(() => new Date().toISOString().slice(0, 10));
+
+const pacienteVigenciaLabel = computed((): "VIGENTE" | "NO VIGENTE" | "SIN DATO" => {
+  const raw = (paciente.estatusVigencia || "")
+    .toUpperCase()
+    .replace(/VIEGENTE/g, "VIGENTE");
+  if (raw.includes("NO VIGENTE") || raw.includes("VENCID")) return "NO VIGENTE";
+  if (raw.includes("VIGENTE")) return "VIGENTE";
+  const vig = (paciente.vigencia || "").slice(0, 10);
+  if (vig && vig >= hoyIso.value) return "VIGENTE";
+  if (vig && vig < hoyIso.value) return "NO VIGENTE";
+  return "SIN DATO";
+});
+
+const pacienteVigente = computed(() => {
+  const raw = (paciente.estatusVigencia || "")
+    .toUpperCase()
+    .replace(/VIEGENTE/g, "VIGENTE");
+  if (raw.includes("NO VIGENTE") || raw.includes("VENCID")) return false;
+  if (raw.includes("VIGENTE")) return true;
+  const vig = (paciente.vigencia || "").slice(0, 10);
+  if (vig) return vig >= hoyIso.value;
+  return false;
+});
+
+const citaDuplicadaDia = computed(() => citasPaciente.value.length > 0);
+
+const citaDuplicadaMsg = computed(() => {
+  const c = citasPaciente.value[0];
+  if (!c) return "";
+  const parts = [
+    formatFechaDisplay(String(c.citd_fechcita || "").slice(0, 10)),
+    formatCitaHoraShort(c.citn_hrcita),
+    String(c.especialidad || "").trim(),
+    String(c.medico || "").trim(),
+    c.hosi_folio != null && c.hosi_folio !== "" ? `folio ${c.hosi_folio}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+});
+
+const especialidadNombre = computed(
+  () =>
+    especialidades.value.find((e) => e.esps_espserv === Number(asignar.esps_espserv))?.espc_descrip ||
+    "",
+);
+
+const medicoNombre = computed(
+  () => medicos.value.find((m) => m.medc_ficha === asignar.medc_ficha)?.medc_nombre || "",
+);
+
+const horaLabel = computed(() => {
+  const hit = horas.value.find((h) => h.hora === Number(asignar.hora));
+  if (hit?.label) return hit.label.includes("HRS") ? hit.label : `${hit.label} h`;
+  return formatCitaHoraShort(asignar.hora);
+});
+
+const puedeConfirmarCita = computed(() => {
+  if (!pacienteBuscado.value || !String(paciente.nombre || "").trim()) return false;
+  if (citaDuplicadaDia.value || asignando.value) return false;
+  if (!horas.value.length) return false;
+  if (!asignar.fecha || asignar.fecha < hoyIso.value) return false;
+  if (!asignar.esps_espserv || !String(asignar.medc_ficha || "").trim() || !asignar.hora) return false;
+  return true;
 });
 
 function citaYaLlego(row: Record<string, unknown> | null | undefined): boolean {
@@ -869,6 +938,14 @@ function formatFechaDisplay(iso: string): string {
   return `${d}/${mo}/${y}`;
 }
 
+function formatCitaHoraShort(hhmm: unknown): string {
+  const n = Number(hhmm);
+  if (!Number.isFinite(n)) return "";
+  const h = Math.floor(n / 100);
+  const m = n % 100;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")} h`;
+}
+
 function citaStatusClass(estatus: unknown): string {
   const s = Number(estatus);
   if (s === 1) return "siah-agenda-row--confirmar";
@@ -895,11 +972,15 @@ function clearPaciente() {
 
 async function loadPaciente() {
   if (!asignar.ficha.trim()) {
+    buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
     clearPaciente();
+    pacienteBuscado.value = false;
+    citasPaciente.value = [];
     return;
   }
   paciente.loading = true;
   error.value = "";
+  buscarHint.value = "";
   try {
     const data = await post<{ ok: boolean; record: Record<string, unknown> }>("/derech/detail", {
       ...props.session,
@@ -921,17 +1002,44 @@ async function loadPaciente() {
     paciente.umaDescri = String(r.uma_desc || "");
     paciente.procedencia = String(r.ders_locfor || "");
     paciente.vigencia = String(r.derd_vigencia || "").slice(0, 10);
-    paciente.estatusVigencia = String(r.estatus_desc || r.ders_estatus || "");
+    paciente.estatusVigencia = String(r.estatus_desc || r.ders_estatus || "").replace(
+      /VIEGENTE/gi,
+      "VIGENTE",
+    );
     paciente.edad = calcEdad(String(r.derd_fecnac || ""));
     if (r.ders_empresa != null && r.ders_empresa !== "") {
       asignar.empresa = Number(r.ders_empresa);
     }
     photoFailed.value = false;
+    pacienteBuscado.value = true;
+    asignarOkFolio.value = "";
+    await loadCitasPaciente();
   } catch (e) {
     clearPaciente();
+    pacienteBuscado.value = false;
+    citasPaciente.value = [];
     error.value = e instanceof Error ? e.message : "Paciente no encontrado";
   } finally {
     paciente.loading = false;
+  }
+}
+
+async function loadCitasPaciente() {
+  if (!asignar.ficha.trim()) {
+    citasPaciente.value = [];
+    return;
+  }
+  try {
+    const data = await post<{ rows: Record<string, unknown>[] }>("/sub/atmed/citas/paciente", {
+      ...props.session,
+      ficha: asignar.ficha.trim(),
+      codigo: (asignar.codigo || "00").trim(),
+      fecha: asignar.fecha,
+    });
+    citasPaciente.value = data.rows || [];
+  } catch (e) {
+    citasPaciente.value = [];
+    error.value = e instanceof Error ? e.message : "Error cargando citas del paciente";
   }
 }
 
@@ -941,7 +1049,14 @@ function limpiarAsignar() {
   asignar.empresa = 0;
   asignar.folioConsulta = "";
   asignar.observaciones = "";
+  if (!asignar.fecha || asignar.fecha < hoyIso.value) {
+    asignar.fecha = hoyIso.value;
+  }
   clearPaciente();
+  citasPaciente.value = [];
+  pacienteBuscado.value = false;
+  asignarOkFolio.value = "";
+  buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
   error.value = "";
   okMsg.value = "";
 }
@@ -951,7 +1066,11 @@ function partialClearAsignar() {
   asignar.ficha = "";
   asignar.codigo = "00";
   asignar.empresa = 0;
+  asignar.folioConsulta = "";
   clearPaciente();
+  citasPaciente.value = [];
+  pacienteBuscado.value = false;
+  buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
 }
 
 async function loadAgendaAsignar() {
@@ -1051,22 +1170,21 @@ async function doAsignar() {
   if (asignando.value) return;
   error.value = "";
   okMsg.value = "";
-  const ficha = asignar.ficha.trim();
-  const codigo = (asignar.codigo || "00").trim();
-  if (!ficha) {
-    error.value = "Capture ficha/código/empresa y pulse Buscar";
+  if (!pacienteBuscado.value) {
+    buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
     return;
   }
-  const dup = rows.value.some(
-    (r) =>
-      String(r.derc_ficha || "").trim() === ficha &&
-      String(r.derc_codigo || "00").trim() === codigo &&
-      Number(r.esps_espserv || 0) === Number(asignar.esps_espserv) &&
-      Number(r.citn_hrcita || 0) === Number(asignar.hora),
-  );
-  if (dup) {
+  if (citaDuplicadaDia.value) {
     error.value =
-      "Ya existe una cita para este paciente, especialidad y hora en la fecha seleccionada";
+      citaDuplicadaMsg.value
+        ? `El paciente ya tiene una cita el mismo día: ${citaDuplicadaMsg.value}. No se permite otra cita hasta definir la regla de negocio.`
+        : "El paciente ya tiene una cita activa el mismo día.";
+    return;
+  }
+  const ficha = asignar.ficha.trim();
+  const codigo = (asignar.codigo || "00").trim();
+  if (!ficha || !paciente.nombre) {
+    buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
     return;
   }
   asignando.value = true;
@@ -1084,11 +1202,14 @@ async function doAsignar() {
       hora: asignar.hora,
       mensaje: asignar.observaciones,
     });
-    okMsg.value = res.mensaje + (res.record ? ` · folio ${res.record.hosi_folio}` : "");
-    if (res.record?.hosi_folio) asignar.folioConsulta = String(res.record.hosi_folio);
+    const folio = res.record?.hosi_folio != null ? String(res.record.hosi_folio) : "";
+    asignarOkFolio.value = folio;
+    okMsg.value = folio
+      ? `Cita registrada. Folio de cita médica: ${folio}`
+      : res.mensaje || "Cita registrada.";
     partialClearAsignar();
     fecha.value = asignar.fecha;
-    await loadAgendaAsignar();
+    await load();
     await loadHoras();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error al asignar";
@@ -1314,6 +1435,21 @@ function usarCitaEnAsignar(row: Record<string, unknown>) {
   loadPaciente();
 }
 
+async function verCitaExistente(row?: Record<string, unknown>) {
+  const cita = row || citasPaciente.value[0];
+  if (!cita) return;
+  const fechaCita = String(cita.citd_fechcita || asignar.fecha || "").slice(0, 10);
+  if (fechaCita) {
+    fecha.value = fechaCita;
+    asignar.fecha = fechaCita;
+  }
+  tab.value = "agenda";
+  await load();
+  const folio = Number(cita.hosi_folio);
+  const found = rows.value.find((r) => Number(r.hosi_folio) === folio);
+  if (found) selectedAgendaRow.value = found;
+}
+
 async function doConsulta() {
   if (!consulta.hosi_folio) {
     error.value = "Seleccione una cita (folio)";
@@ -1424,7 +1560,7 @@ watch(
 watch(
   () => asignar.fecha,
   () => {
-    if (tab.value === "asignar") loadAgendaAsignar();
+    if (tab.value === "asignar" && pacienteBuscado.value) loadCitasPaciente();
   },
 );
 
@@ -1438,8 +1574,11 @@ watch(
 
 watch(tab, async (t) => {
   if (t === "asignar") {
-    asignar.fecha = fecha.value;
-    await loadAgendaAsignar();
+    if (!asignar.fecha || asignar.fecha < hoyIso.value) {
+      asignar.fecha = fecha.value >= hoyIso.value ? fecha.value : hoyIso.value;
+    }
+    await loadCatalogos();
+    if (pacienteBuscado.value) await loadCitasPaciente();
   }
   if (t === "consulta") {
     consultaOkLocal.value = false;
@@ -1662,267 +1801,232 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-else-if="tab === 'asignar'" class="siah-asigna">
-      <div class="siah-asigna-layout">
-        <!-- Formulario izquierdo -->
-        <section class="siah-asigna-form">
-          <div class="flex justify-end gap-2 mb-3">
-            <UButton label="LIMPIAR" color="neutral" variant="outline" size="sm" :disabled="loading || asignando" @click="limpiarAsignar" />
-          </div>
+        <div v-else-if="tab === 'asignar'" class="siah-asigna siah-asigna--flujo">
+          <UAlert
+            v-if="asignarOkFolio"
+            color="success"
+            variant="subtle"
+            class="mb-2"
+            :title="`Cita registrada. Folio de cita médica: ${asignarOkFolio}`"
+          />
 
-          <div class="siah-field-row siah-field-row--esp">
-            <label class="siah-label siah-label--sm">CLAVE</label>
-            <input
-              v-model.number="asignar.esps_espserv"
-              type="number"
-              class="siah-input siah-input--clave"
-              @change="loadCatalogos"
-            />
-            <label class="siah-label">ESPECIALIDAD</label>
-            <select
-              v-model.number="asignar.esps_espserv"
-              class="siah-input siah-input--grow"
-              @change="loadCatalogos"
+          <AtmedSectionCard title="1. Buscar paciente">
+            <p v-if="buscarHint" class="siah-hint-info mb-2">{{ buscarHint }}</p>
+            <div class="siah-field-row">
+              <label class="siah-label">Ficha</label>
+              <input
+                v-model="asignar.ficha"
+                class="siah-input siah-input--ficha"
+                @keydown.enter.prevent="loadPaciente"
+              />
+              <label class="siah-label">Código</label>
+              <input
+                v-model="asignar.codigo"
+                class="siah-input siah-input--cod"
+                @keydown.enter.prevent="loadPaciente"
+              />
+              <label class="siah-label">Empresa</label>
+              <input
+                v-model.number="asignar.empresa"
+                type="number"
+                class="siah-input siah-input--emp"
+                @keydown.enter.prevent="loadPaciente"
+              />
+            </div>
+            <div class="flex flex-wrap justify-end gap-2 mt-2">
+              <UButton
+                label="Limpiar"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :disabled="loading || asignando || paciente.loading"
+                @click="limpiarAsignar"
+              />
+              <UButton
+                label="Buscar paciente"
+                icon="i-lucide-search"
+                color="primary"
+                size="sm"
+                :loading="paciente.loading"
+                @click="loadPaciente"
+              />
+            </div>
+          </AtmedSectionCard>
+
+          <template v-if="pacienteBuscado">
+            <AtmedSectionCard title="2. Datos del paciente">
+              <div class="siah-paciente-card">
+                <div class="siah-foto-wrap">
+                  <img
+                    v-if="patientPhotoUrl && !photoFailed"
+                    :src="patientPhotoUrl"
+                    alt="Foto del paciente"
+                    class="siah-foto"
+                    @error="photoFailed = true"
+                  />
+                  <div v-else class="siah-foto siah-foto--placeholder">
+                    <span v-if="paciente.loading">…</span>
+                    <span v-else>SIN FOTO</span>
+                  </div>
+                </div>
+                <div class="siah-paciente-card__body">
+                  <div class="siah-paciente-card__head">
+                    <p class="siah-paciente-card__nombre">{{ paciente.nombre || "—" }}</p>
+                    <UBadge
+                      :color="pacienteVigente ? 'success' : pacienteVigenciaLabel === 'SIN DATO' ? 'neutral' : 'error'"
+                      variant="subtle"
+                      size="sm"
+                    >
+                      {{ pacienteVigenciaLabel }}
+                    </UBadge>
+                  </div>
+                  <div class="siah-paciente-card__meta">
+                    <span><strong>Edad</strong> {{ paciente.edad || "—" }}</span>
+                    <span><strong>Ficha</strong> {{ asignar.ficha }}-{{ asignar.codigo }}</span>
+                    <span><strong>Departamento</strong> {{ paciente.depto || "—" }}</span>
+                    <span><strong>UMA</strong> {{ [paciente.uma, paciente.umaDescri].filter(Boolean).join(" · ") || "—" }}</span>
+                  </div>
+                </div>
+              </div>
+              <UAlert
+                v-if="pacienteVigenciaLabel === 'NO VIGENTE'"
+                color="warning"
+                variant="subtle"
+                class="mt-2"
+                title="El paciente no está vigente. Puede continuar con advertencia; la regla de bloqueo está pendiente."
+              />
+            </AtmedSectionCard>
+
+            <UAlert
+              v-if="citasPaciente.length"
+              color="error"
+              variant="subtle"
+              title="Cita existente"
+              class="mt-1"
             >
-              <option v-for="e in especialidades" :key="e.esps_espserv" :value="e.esps_espserv">
-                {{ e.espc_descrip }}
-              </option>
-            </select>
-          </div>
+              <template #description>
+                <p class="text-sm m-0 mb-2">{{ citaDuplicadaMsg }}</p>
+                <UButton
+                  label="Ver cita"
+                  color="error"
+                  variant="soft"
+                  size="xs"
+                  @click="verCitaExistente(citasPaciente[0])"
+                />
+              </template>
+            </UAlert>
 
-          <div class="siah-field-row">
-            <label class="siah-label">SELECCIONE FECHA</label>
-            <input v-model="asignar.fecha" type="date" class="siah-input siah-input--fecha" />
-            <label class="siah-label">SELECCIONE HORA</label>
-            <select v-model.number="asignar.hora" class="siah-input siah-input--hora">
-              <option v-for="h in horas" :key="h.hora" :value="h.hora">{{ h.label }} HRS.</option>
-            </select>
-          </div>
-
-          <div class="siah-field-row siah-field-row--medico">
-            <label class="siah-label">MÉDICO</label>
-            <select
-              v-model="asignar.medc_ficha"
-              class="siah-input siah-input--grow"
-              @change="
-                asignar.medc_codigo =
-                  medicos.find((m) => m.medc_ficha === asignar.medc_ficha)?.medc_codigo || '00';
-                loadHoras();
-              "
-            >
-              <option v-for="m in medicos" :key="m.medc_ficha + m.esps_espserv" :value="m.medc_ficha">
-                {{ m.medc_nombre }} ({{ m.medc_ficha }})
-              </option>
-            </select>
-          </div>
-
-          <div class="siah-paciente-block">
-            <div class="siah-paciente-fields">
-              <p class="siah-hint mb-1">Capture ficha/código/empresa y pulse Buscar</p>
+            <AtmedSectionCard title="3. Datos de la nueva cita">
+              <div class="siah-field-row siah-field-row--esp">
+                <label class="siah-label">Especialidad</label>
+                <select
+                  v-model.number="asignar.esps_espserv"
+                  class="siah-input siah-input--grow"
+                  @change="loadCatalogos"
+                >
+                  <option v-for="e in especialidades" :key="e.esps_espserv" :value="e.esps_espserv">
+                    {{ e.espc_descrip }}
+                  </option>
+                </select>
+              </div>
+              <div class="siah-field-row siah-field-row--medico">
+                <label class="siah-label">Médico</label>
+                <select
+                  v-model="asignar.medc_ficha"
+                  class="siah-input siah-input--grow"
+                  @change="
+                    asignar.medc_codigo =
+                      medicos.find((m) => m.medc_ficha === asignar.medc_ficha)?.medc_codigo || '00';
+                    loadHoras();
+                  "
+                >
+                  <option
+                    v-for="m in medicos"
+                    :key="m.medc_ficha + m.esps_espserv"
+                    :value="m.medc_ficha"
+                  >
+                    {{ m.medc_nombre }} ({{ m.medc_ficha }})
+                  </option>
+                </select>
+              </div>
               <div class="siah-field-row">
-                <label class="siah-label siah-label--sm">FICHA</label>
+                <label class="siah-label">Fecha</label>
                 <input
-                  v-model="asignar.ficha"
-                  class="siah-input siah-input--ficha"
-                  @keydown.enter.prevent="loadPaciente"
+                  v-model="asignar.fecha"
+                  type="date"
+                  class="siah-input siah-input--fecha"
+                  :min="hoyIso"
                 />
-                <label class="siah-label siah-label--xs">COD</label>
-                <input
-                  v-model="asignar.codigo"
-                  class="siah-input siah-input--cod"
-                  @keydown.enter.prevent="loadPaciente"
-                />
-                <label class="siah-label siah-label--xs">EMP</label>
-                <input
-                  v-model.number="asignar.empresa"
-                  type="number"
-                  class="siah-input siah-input--emp"
-                  @keydown.enter.prevent="loadPaciente"
+                <label class="siah-label">Hora</label>
+                <select v-model.number="asignar.hora" class="siah-input siah-input--hora">
+                  <option v-for="h in horas" :key="h.hora" :value="h.hora">{{ h.label }}</option>
+                </select>
+              </div>
+              <div class="siah-field-row siah-field-row--obs">
+                <label class="siah-label siah-label--top">Observaciones</label>
+                <textarea v-model="asignar.observaciones" class="siah-textarea" rows="3" />
+              </div>
+              <UAlert
+                v-if="citaDuplicadaDia"
+                color="error"
+                variant="subtle"
+                class="mt-2"
+                :title="`No se puede confirmar: el paciente ya tiene cita el mismo día (${citaDuplicadaMsg}).`"
+              />
+            </AtmedSectionCard>
+
+            <AtmedSectionCard title="4. Revisar y confirmar">
+              <div class="siah-asigna-resumen">
+                <div>
+                    <span class="siah-meta-label">Paciente</span>
+                  <p class="siah-asigna-resumen__val">
+                    {{ paciente.nombre || "—" }}<span v-if="paciente.edad"> · {{ paciente.edad }} años</span>
+                  </p>
+                </div>
+                <div>
+                  <span class="siah-meta-label">Especialidad</span>
+                  <p class="siah-asigna-resumen__val">{{ especialidadNombre || "—" }}</p>
+                </div>
+                <div>
+                  <span class="siah-meta-label">Médico</span>
+                  <p class="siah-asigna-resumen__val">{{ medicoNombre || "—" }}</p>
+                </div>
+                <div>
+                  <span class="siah-meta-label">Fecha</span>
+                  <p class="siah-asigna-resumen__val">{{ formatFechaDisplay(asignar.fecha) || "—" }}</p>
+                </div>
+                <div>
+                  <span class="siah-meta-label">Hora</span>
+                  <p class="siah-asigna-resumen__val">{{ horaLabel || "—" }}</p>
+                </div>
+                <div>
+                  <span class="siah-meta-label">Folio</span>
+                  <p class="siah-asigna-resumen__val">
+                    {{ asignarOkFolio || "Se genera al confirmar" }}
+                  </p>
+                </div>
+              </div>
+              <div class="flex flex-wrap justify-end gap-2 mt-3">
+                <UButton
+                  label="Cancelar"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :disabled="asignando"
+                  @click="limpiarAsignar"
                 />
                 <UButton
-                  label="Buscar"
-                  icon="i-lucide-search"
+                  label="Confirmar cita"
                   color="primary"
-                  size="xs"
-                  :loading="paciente.loading"
-                  @click="loadPaciente"
-                />
-                <label class="siah-label">NOMBRE</label>
-                <input
-                  :value="paciente.nombre"
-                  readonly
-                  class="siah-input siah-input--grow siah-input--readonly"
-                  placeholder="—"
+                  size="sm"
+                  :loading="asignando"
+                  :disabled="!puedeConfirmarCita || asignando"
+                  @click="doAsignar"
                 />
               </div>
-
-              <div class="siah-meta-grid">
-                <div class="siah-meta-item">
-                  <span class="siah-meta-label">CT</span>
-                  <input :value="paciente.ct" readonly class="siah-input siah-input--meta" />
-                </div>
-                <div class="siah-meta-item">
-                  <span class="siah-meta-label">DEPTO</span>
-                  <input :value="paciente.depto" readonly class="siah-input siah-input--meta" />
-                </div>
-                <div class="siah-meta-item">
-                  <span class="siah-meta-label">ORG</span>
-                  <input :value="paciente.org" readonly class="siah-input siah-input--meta" />
-                </div>
-                <div class="siah-meta-item">
-                  <span class="siah-meta-label">EDAD</span>
-                  <input :value="paciente.edad" readonly class="siah-input siah-input--meta" />
-                </div>
-                <div class="siah-meta-item">
-                  <span class="siah-meta-label">SX</span>
-                  <input :value="paciente.sx" readonly class="siah-input siah-input--meta" />
-                </div>
-                <div class="siah-meta-item">
-                  <span class="siah-meta-label">RC</span>
-                  <input :value="paciente.rc" readonly class="siah-input siah-input--meta" />
-                </div>
-                <div class="siah-meta-item">
-                  <span class="siah-meta-label">UMA</span>
-                  <input :value="paciente.uma" readonly class="siah-input siah-input--meta" />
-                </div>
-              </div>
-
-              <div class="siah-field-row">
-                <label class="siah-label">UMA DESCRI</label>
-                <input
-                  :value="paciente.umaDescri"
-                  readonly
-                  class="siah-input siah-input--grow siah-input--readonly"
-                  placeholder="—"
-                />
-              </div>
-
-              <div class="siah-field-row siah-field-row--vigencia">
-                <label class="siah-label">PROCEDENCIA</label>
-                <input
-                  :value="paciente.procedencia"
-                  readonly
-                  class="siah-input siah-input--procedencia siah-input--readonly"
-                />
-                <label class="siah-label">VIGENCIA</label>
-                <input
-                  :value="formatFechaDisplay(paciente.vigencia)"
-                  readonly
-                  class="siah-input siah-input--vigencia siah-input--readonly"
-                />
-                <label class="siah-label siah-label--wrap">ESTADO DE VIGENCIA</label>
-                <input
-                  :value="paciente.estatusVigencia"
-                  readonly
-                  class="siah-input siah-input--estatus siah-input--readonly"
-                />
-              </div>
-            </div>
-
-            <div class="siah-foto-wrap">
-              <img
-                v-if="patientPhotoUrl && !photoFailed"
-                :src="patientPhotoUrl"
-                alt="Foto del paciente"
-                class="siah-foto"
-                @error="photoFailed = true"
-              />
-              <div v-else class="siah-foto siah-foto--placeholder">
-                <span v-if="paciente.loading">…</span>
-                <span v-else>SIN FOTO</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="siah-field-row siah-field-row--folio">
-            <label class="siah-label">Folio de cita médica</label>
-            <input v-model="asignar.folioConsulta" class="siah-input siah-input--folio" />
-            <span v-if="!asignar.folioConsulta" class="siah-hint">Ingresa No Folio.</span>
-          </div>
-
-          <div class="siah-field-row siah-field-row--obs">
-            <label class="siah-label siah-label--top">OBSERVACIONES</label>
-            <textarea v-model="asignar.observaciones" class="siah-textarea" rows="4" />
-          </div>
-
-          <div class="flex justify-end gap-2 mt-3">
-            <UButton
-              label="GRABA CITA"
-              color="primary"
-              size="sm"
-              :loading="asignando || loading"
-              :disabled="asignando"
-              @click="doAsignar"
-            />
-          </div>
-        </section>
-
-        <!-- Agenda del día (derecha) -->
-        <section class="siah-asigna-agenda">
-          <p class="siah-agenda-fecha">{{ formatFechaDisplay(asignar.fecha) }}</p>
-          <div class="siah-agenda-table-wrap">
-            <table class="siah-agenda-table">
-              <thead>
-                <tr>
-                  <th>No</th>
-                  <th>FOLIO</th>
-                  <th>HORA</th>
-                  <th>FICHA</th>
-                  <th>NOMBRE</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="loading && !rows.length">
-                  <td colspan="5" class="siah-agenda-empty">Cargando…</td>
-                </tr>
-                <tr v-else-if="!rows.length">
-                  <td colspan="5" class="siah-agenda-empty">Sin citas para esta fecha</td>
-                </tr>
-                <tr
-                  v-for="(row, idx) in agendaAsignarPageRows"
-                  v-else
-                  :key="String(row.hosi_folio)"
-                  :class="citaStatusClass(row.cits_estatus)"
-                  class="siah-agenda-row"
-                  @click="usarCitaEnAsignar(row)"
-                >
-                  <td>{{ (agendaAsignarPage - 1) * AGENDA_ASIGNAR_PAGE_SIZE + idx + 1 }}</td>
-                  <td>{{ row.hosi_folio }}</td>
-                  <td>{{ formatHora(row.citn_hrcita) }}</td>
-                  <td>{{ row.derc_ficha }}</td>
-                  <td>{{ row.paciente }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-if="rows.length > AGENDA_ASIGNAR_PAGE_SIZE" class="flex items-center justify-center gap-2 py-2">
-            <UButton
-              label="Anterior"
-              size="xs"
-              color="neutral"
-              variant="soft"
-              :disabled="agendaAsignarPage <= 1"
-              @click="agendaAsignarPage = Math.max(1, agendaAsignarPage - 1)"
-            />
-            <span class="text-xs text-muted">{{ agendaAsignarPage }} / {{ agendaAsignarTotalPages }}</span>
-            <UButton
-              label="Siguiente"
-              size="xs"
-              color="neutral"
-              variant="soft"
-              :disabled="agendaAsignarPage >= agendaAsignarTotalPages"
-              @click="agendaAsignarPage = Math.min(agendaAsignarTotalPages, agendaAsignarPage + 1)"
-            />
-          </div>
-          <div class="siah-agenda-leyenda">
-            <span class="siah-leyenda-item siah-leyenda-item--confirmar">POR CONFIRMAR</span>
-            <span class="siah-leyenda-item siah-leyenda-item--espera">EN ESPERA</span>
-            <span class="siah-leyenda-item siah-leyenda-item--atendido">ATENDIDO</span>
-            <span class="siah-leyenda-item siah-leyenda-item--diferido">DIFERIDO</span>
-          </div>
-        </section>
-      </div>
-    </div>
+            </AtmedSectionCard>
+          </template>
+        </div>
 
         <div v-else-if="tab === 'consulta'" class="flex flex-col gap-3 min-w-0">
           <p class="text-xs font-semibold uppercase text-primary m-0">{{ consultaStatusLine }}</p>
@@ -2663,6 +2767,14 @@ onMounted(async () => {
   color: #665500;
 }
 
+.siah-asigna--flujo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 960px;
+  width: 100%;
+}
+
 .siah-asigna-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
@@ -2687,6 +2799,65 @@ onMounted(async () => {
   display: flex;
   gap: 0.35rem;
   margin-bottom: 0.5rem;
+}
+
+.siah-asigna-resumen {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.65rem 0.85rem;
+}
+
+.siah-asigna-resumen__val {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #1f2937;
+  word-break: break-word;
+}
+
+.siah-paciente-card {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.35rem 0;
+}
+
+.siah-paciente-card__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.siah-paciente-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
+.siah-paciente-card__nombre {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #111;
+  line-height: 1.25;
+}
+
+.siah-paciente-card__meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  color: #374151;
+}
+
+.siah-paciente-card__meta strong {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .siah-btn {
@@ -2824,6 +2995,14 @@ onMounted(async () => {
   color: #c00;
   font-size: 0.65rem;
   font-weight: 700;
+}
+
+.siah-hint-info {
+  margin: 0;
+  color: #6b7280;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .siah-paciente-block {
