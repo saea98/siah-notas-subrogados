@@ -58,6 +58,21 @@ const sidebarTabActive = computed(() => tab.value);
 const especialidades = ref<{ esps_espserv: number; espc_descrip: string; requiere_signos: string }[]>([]);
 const medicos = ref<{ medc_ficha: string; medc_codigo: string; medc_nombre: string; esps_espserv: number }[]>([]);
 const horas = ref<{ hora: number; label: string }[]>([]);
+const empresasCat = ref<{ emp_clave: number; emp_descrip: string }[]>([]);
+const beneficiariosFicha = ref<
+  { derc_codigo: string; ders_empresa: string; nombre_completo: string }[]
+>([]);
+
+/** Códigos de familiar frecuentes (catálogo de selección). */
+const CODIGOS_CATALOGO = [
+  { value: "00", label: "00 — Titular" },
+  { value: "01", label: "01 — Cónyuge" },
+  { value: "02", label: "02 — Hijo(a)" },
+  { value: "03", label: "03 — Padre/Madre" },
+  { value: "04", label: "04 — Hermano(a)" },
+  { value: "08", label: "08 — Otro familiar" },
+  { value: "10", label: "10 — Beneficiario" },
+];
 
 const asignar = reactive({
   ficha: "",
@@ -66,6 +81,7 @@ const asignar = reactive({
   esps_espserv: 101,
   medc_ficha: "900002",
   medc_codigo: "00",
+  medicoKey: "900002|00|101",
   fecha: new Date().toISOString().slice(0, 10),
   hora: 900,
   folioConsulta: "",
@@ -504,9 +520,42 @@ const especialidadNombre = computed(
     "",
 );
 
-const medicoNombre = computed(
-  () => medicos.value.find((m) => m.medc_ficha === asignar.medc_ficha)?.medc_nombre || "",
-);
+const medicoNombre = computed(() => {
+  const hit = medicos.value.find(
+    (m) =>
+      m.medc_ficha === asignar.medc_ficha &&
+      Number(m.esps_espserv) === Number(asignar.esps_espserv),
+  );
+  return hit?.medc_nombre || medicos.value.find((m) => m.medc_ficha === asignar.medc_ficha)?.medc_nombre || "";
+});
+
+const codigosOptions = computed(() => {
+  const fromDh = new Map<string, string>();
+  for (const b of beneficiariosFicha.value) {
+    const c = String(b.derc_codigo || "00").padStart(2, "0");
+    if (!fromDh.has(c)) {
+      const nom = String(b.nombre_completo || "").trim();
+      fromDh.set(c, nom ? `${c} — ${nom}` : c);
+    }
+  }
+  if (fromDh.size) {
+    return [...fromDh.entries()].map(([value, label]) => ({ value, label }));
+  }
+  return CODIGOS_CATALOGO;
+});
+
+const empresasOptions = computed(() => {
+  const base = empresasCat.value.length
+    ? empresasCat.value
+    : [{ emp_clave: 0, emp_descrip: "0 — Default" }];
+  const fromDh = new Set(
+    beneficiariosFicha.value.map((b) => Number(b.ders_empresa ?? 0)),
+  );
+  if (fromDh.size && beneficiariosFicha.value.length) {
+    return base.filter((e) => fromDh.has(Number(e.emp_clave)));
+  }
+  return base;
+});
 
 const horaLabel = computed(() => {
   const hit = horas.value.find((h) => h.hora === Number(asignar.hora));
@@ -519,9 +568,31 @@ const puedeConfirmarCita = computed(() => {
   if (citaDuplicadaDia.value || asignando.value) return false;
   if (!horas.value.length) return false;
   if (!asignar.fecha || asignar.fecha < hoyIso.value) return false;
-  if (!asignar.esps_espserv || !String(asignar.medc_ficha || "").trim() || !asignar.hora) return false;
+  if (!asignar.esps_espserv || !String(asignar.medc_ficha || "").trim()) return false;
+  if (!asignar.hora || Number(asignar.hora) <= 0) return false;
   return true;
 });
+
+function medicoOptionKey(m: {
+  medc_ficha: string;
+  medc_codigo: string;
+  esps_espserv: number;
+}): string {
+  return `${m.medc_ficha}|${m.medc_codigo || "00"}|${m.esps_espserv}`;
+}
+
+function applyMedicoKey(key: string) {
+  const [f, c, e] = String(key || "").split("|");
+  if (!f) return;
+  asignar.medc_ficha = f;
+  asignar.medc_codigo = c || "00";
+  asignar.esps_espserv = Number(e) || asignar.esps_espserv;
+  asignar.medicoKey = medicoOptionKey({
+    medc_ficha: asignar.medc_ficha,
+    medc_codigo: asignar.medc_codigo,
+    esps_espserv: asignar.esps_espserv,
+  });
+}
 
 function citaYaLlego(row: Record<string, unknown> | null | undefined): boolean {
   if (!row) return false;
@@ -976,12 +1047,14 @@ async function loadPaciente() {
     clearPaciente();
     pacienteBuscado.value = false;
     citasPaciente.value = [];
+    beneficiariosFicha.value = [];
     return;
   }
   paciente.loading = true;
   error.value = "";
   buscarHint.value = "";
   try {
+    await loadBeneficiariosPorFicha();
     const data = await post<{ ok: boolean; record: Record<string, unknown> }>("/derech/detail", {
       ...props.session,
       ficha: asignar.ficha.trim(),
@@ -1054,6 +1127,7 @@ function limpiarAsignar() {
   }
   clearPaciente();
   citasPaciente.value = [];
+  beneficiariosFicha.value = [];
   pacienteBuscado.value = false;
   asignarOkFolio.value = "";
   buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
@@ -1069,6 +1143,7 @@ function partialClearAsignar() {
   asignar.folioConsulta = "";
   clearPaciente();
   citasPaciente.value = [];
+  beneficiariosFicha.value = [];
   pacienteBuscado.value = false;
   buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
 }
@@ -1108,13 +1183,66 @@ async function load() {
   }
 }
 
+async function loadEmpresasCat() {
+  try {
+    const data = await post<{ rows: Record<string, unknown>[] }>("/sub/atmed/empresas", props.session);
+    empresasCat.value = (data.rows || []).map((r) => ({
+      emp_clave: Number(r.emp_clave ?? 0),
+      emp_descrip: String(r.emp_descrip || r.emp_clave || "0"),
+    }));
+    if (!empresasCat.value.length) {
+      empresasCat.value = [{ emp_clave: 0, emp_descrip: "0 — Default" }];
+    }
+  } catch {
+    empresasCat.value = [{ emp_clave: 0, emp_descrip: "0 — Default" }];
+  }
+}
+
+async function loadBeneficiariosPorFicha() {
+  const ficha = asignar.ficha.trim();
+  if (!ficha) {
+    beneficiariosFicha.value = [];
+    return;
+  }
+  try {
+    const data = await post<{ rows: Record<string, unknown>[] }>("/derech/list", {
+      ...props.session,
+      ficha,
+      limit: 50,
+      page: 1,
+    });
+    beneficiariosFicha.value = (data.rows || []).map((r) => ({
+      derc_codigo: String(r.derc_codigo || "00").padStart(2, "0"),
+      ders_empresa: String(r.ders_empresa ?? 0),
+      nombre_completo: String(r.nombre_completo || "").trim(),
+    }));
+    if (beneficiariosFicha.value.length === 1) {
+      asignar.codigo = beneficiariosFicha.value[0].derc_codigo;
+      asignar.empresa = Number(beneficiariosFicha.value[0].ders_empresa);
+    } else if (beneficiariosFicha.value.length > 1) {
+      const hit = beneficiariosFicha.value.find(
+        (b) =>
+          b.derc_codigo === String(asignar.codigo || "00").padStart(2, "0") &&
+          Number(b.ders_empresa) === Number(asignar.empresa),
+      );
+      if (!hit) {
+        asignar.codigo = beneficiariosFicha.value[0].derc_codigo;
+        asignar.empresa = Number(beneficiariosFicha.value[0].ders_empresa);
+      }
+    }
+  } catch {
+    beneficiariosFicha.value = [];
+  }
+}
+
 async function loadCatalogos() {
   try {
     const [esp, med] = await Promise.all([
       post<{ rows: Record<string, unknown>[] }>("/sub/atmed/especialidades", props.session),
       post<{ rows: Record<string, unknown>[] }>("/sub/atmed/medicos", {
         ...props.session,
-        esps_espserv: asignar.esps_espserv,
+        // Sin filtro: la especialidad la define el médico seleccionado
+        esps_espserv: null,
       }),
     ]);
     especialidades.value = (esp.rows || []).map((r) => ({
@@ -1128,14 +1256,24 @@ async function loadCatalogos() {
       medc_nombre: String(r.medc_nombre || ""),
       esps_espserv: Number(r.esps_espserv),
     }));
-    if (medicos.value.length && !medicos.value.find((m) => m.medc_ficha === asignar.medc_ficha)) {
-      asignar.medc_ficha = medicos.value[0].medc_ficha;
-      asignar.medc_codigo = medicos.value[0].medc_codigo;
+    const currentKey = asignar.medicoKey;
+    const stillThere = medicos.value.some((m) => medicoOptionKey(m) === currentKey);
+    if (medicos.value.length && !stillThere) {
+      const prefer =
+        medicos.value.find((m) => m.medc_ficha === asignar.medc_ficha) || medicos.value[0];
+      applyMedicoKey(medicoOptionKey(prefer));
+    } else if (stillThere) {
+      applyMedicoKey(currentKey);
     }
     await loadHoras();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error catálogos";
   }
+}
+
+async function onMedicoChange() {
+  applyMedicoKey(asignar.medicoKey);
+  await loadHoras();
 }
 
 async function loadHoras() {
@@ -1144,10 +1282,14 @@ async function loadHoras() {
     medc_ficha: asignar.medc_ficha,
     medc_codigo: asignar.medc_codigo,
     fecha: asignar.fecha,
+    esps_espserv: asignar.esps_espserv,
   });
   horas.value = data.rows || [];
   if (horas.value.length && !horas.value.find((h) => h.hora === asignar.hora)) {
     asignar.hora = horas.value[0].hora;
+  }
+  if (!horas.value.length) {
+    asignar.hora = 0;
   }
 }
 
@@ -1551,9 +1693,9 @@ async function doSignos() {
 }
 
 watch(
-  () => [asignar.esps_espserv, asignar.medc_ficha, asignar.fecha],
+  () => [asignar.medicoKey, asignar.fecha],
   () => {
-    if (tab.value === "asignar") loadCatalogos();
+    if (tab.value === "asignar") loadHoras();
   },
 );
 
@@ -1577,6 +1719,7 @@ watch(tab, async (t) => {
     if (!asignar.fecha || asignar.fecha < hoyIso.value) {
       asignar.fecha = fecha.value >= hoyIso.value ? fecha.value : hoyIso.value;
     }
+    await loadEmpresasCat();
     await loadCatalogos();
     if (pacienteBuscado.value) await loadCitasPaciente();
   }
@@ -1588,6 +1731,7 @@ watch(tab, async (t) => {
 
 onMounted(async () => {
   await load();
+  await loadEmpresasCat();
   await loadCatalogos();
 });
 </script>
@@ -1817,21 +1961,33 @@ onMounted(async () => {
               <input
                 v-model="asignar.ficha"
                 class="siah-input siah-input--ficha"
+                @blur="loadBeneficiariosPorFicha"
                 @keydown.enter.prevent="loadPaciente"
               />
-              <label class="siah-label">Código</label>
-              <input
+              <label class="siah-label" title="Codificación del beneficiario">Código</label>
+              <select
                 v-model="asignar.codigo"
                 class="siah-input siah-input--cod"
                 @keydown.enter.prevent="loadPaciente"
-              />
-              <label class="siah-label">Empresa</label>
-              <input
+              >
+                <option v-for="c in codigosOptions" :key="c.value" :value="c.value">
+                  {{ c.label }}
+                </option>
+              </select>
+              <label class="siah-label" title="Empresa / contrato">Empresa</label>
+              <select
                 v-model.number="asignar.empresa"
-                type="number"
                 class="siah-input siah-input--emp"
                 @keydown.enter.prevent="loadPaciente"
-              />
+              >
+                <option
+                  v-for="e in empresasOptions"
+                  :key="e.emp_clave"
+                  :value="e.emp_clave"
+                >
+                  {{ e.emp_clave }} — {{ e.emp_descrip }}
+                </option>
+              </select>
             </div>
             <div class="flex flex-wrap justify-end gap-2 mt-2">
               <UButton
@@ -1917,37 +2073,40 @@ onMounted(async () => {
             </UAlert>
 
             <AtmedSectionCard title="3. Datos de la nueva cita">
-              <div class="siah-field-row siah-field-row--esp">
-                <label class="siah-label">Especialidad</label>
-                <select
-                  v-model.number="asignar.esps_espserv"
-                  class="siah-input siah-input--grow"
-                  @change="loadCatalogos"
-                >
-                  <option v-for="e in especialidades" :key="e.esps_espserv" :value="e.esps_espserv">
-                    {{ e.espc_descrip }}
-                  </option>
-                </select>
-              </div>
               <div class="siah-field-row siah-field-row--medico">
                 <label class="siah-label">Médico</label>
                 <select
-                  v-model="asignar.medc_ficha"
+                  v-model="asignar.medicoKey"
                   class="siah-input siah-input--grow"
-                  @change="
-                    asignar.medc_codigo =
-                      medicos.find((m) => m.medc_ficha === asignar.medc_ficha)?.medc_codigo || '00';
-                    loadHoras();
-                  "
+                  @change="onMedicoChange"
                 >
                   <option
                     v-for="m in medicos"
-                    :key="m.medc_ficha + m.esps_espserv"
-                    :value="m.medc_ficha"
+                    :key="medicoOptionKey(m)"
+                    :value="medicoOptionKey(m)"
                   >
-                    {{ m.medc_nombre }} ({{ m.medc_ficha }})
+                    {{
+                      m.medc_nombre +
+                      " (" +
+                      m.medc_ficha +
+                      ")" +
+                      (especialidades.find((e) => e.esps_espserv === m.esps_espserv)
+                        ? " — " +
+                          especialidades.find((e) => e.esps_espserv === m.esps_espserv)?.espc_descrip
+                        : "")
+                    }}
                   </option>
                 </select>
+              </div>
+              <div class="siah-field-row siah-field-row--esp">
+                <label class="siah-label">Especialidad</label>
+                <input
+                  class="siah-input siah-input--grow"
+                  type="text"
+                  readonly
+                  :value="especialidadNombre || 'Se asigna según el médico'"
+                  title="La especialidad corresponde al médico seleccionado"
+                />
               </div>
               <div class="siah-field-row">
                 <label class="siah-label">Fecha</label>
@@ -1959,6 +2118,7 @@ onMounted(async () => {
                 />
                 <label class="siah-label">Hora</label>
                 <select v-model.number="asignar.hora" class="siah-input siah-input--hora">
+                  <option v-if="!horas.length" :value="0" disabled>Sin horarios disponibles</option>
                   <option v-for="h in horas" :key="h.hora" :value="h.hora">{{ h.label }}</option>
                 </select>
               </div>
