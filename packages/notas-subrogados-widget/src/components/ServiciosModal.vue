@@ -39,8 +39,10 @@ const props = withDefaults(
     folio: number;
     pacienteLine: string;
     diagnostico?: string;
+    /** Solo consulta: no alta/cancelación (altas van por forma 11-5). */
+    readOnly?: boolean;
   }>(),
-  { apiPrefix: "", diagnostico: "" },
+  { apiPrefix: "", diagnostico: "", readOnly: true },
 );
 
 const emit = defineEmits<{ close: [] }>();
@@ -226,6 +228,10 @@ async function loadRegistradas() {
 }
 
 async function agregar() {
+  if (props.readOnly) {
+    error.value = "El alta de solicitudes se realiza desde la forma 11-5. Aquí solo consulta.";
+    return;
+  }
   if (!props.folio) {
     error.value = "No hay folio de consulta";
     return;
@@ -353,7 +359,16 @@ watch(q, (term) => {
     <template #content>
       <div class="flex max-h-[min(92vh,860px)] flex-col">
         <div class="flex flex-wrap items-center gap-2 border-b border-default bg-elevated px-4 py-3">
+          <UAlert
+            v-if="readOnly"
+            color="info"
+            variant="subtle"
+            class="w-full"
+            title="Solo consulta"
+            description="El registro de solicitudes se realiza desde la forma 11-5. Aquí puede revisar e imprimir lo ya elaborado."
+          />
           <UButton
+            v-if="!readOnly"
             label="AGREGA SERVICIO"
             icon="i-lucide-save"
             color="primary"
@@ -363,6 +378,7 @@ watch(q, (term) => {
             @click="agregar"
           />
           <UButton
+            v-if="!readOnly"
             label="CANCELAR SERVICIO"
             icon="i-lucide-x"
             color="error"
@@ -393,7 +409,7 @@ watch(q, (term) => {
           <UAlert v-if="okMsg" color="success" variant="subtle" :title="`Servicio registrado · ${okMsg}`" />
 
           <div class="grid gap-3 lg:grid-cols-2">
-            <div class="space-y-3">
+            <div v-if="!readOnly" class="space-y-3">
               <UCard
                 :ui="{
                   root: 'overflow-hidden w-full',

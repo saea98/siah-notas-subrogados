@@ -16,7 +16,7 @@ const props = withDefaults(
     apiBase: string;
     /** Prefijo opcional de rutas (proxy Laravel) */
     apiPrefix?: string;
-    session: { usuario: string; password: string; unitrab: string };
+    session: { usuario: string; password: string; unitrab: string; rol?: string };
     /**
      * Menú AGENDA/ASIGNA/CONSULTA del widget.
      * En portal Subrogados (embebido) poner false: el host controla el chrome.
@@ -45,6 +45,10 @@ const emit = defineEmits<{
 }>();
 
 const showChromeNav = computed(() => props.showModuleNav && !props.embedded);
+/** Rol Subrogados: R = recepcionista (sin clínica). */
+const sessionRol = computed(() => String(props.session?.rol || "").trim().toUpperCase());
+const esRecepcionista = computed(() => sessionRol.value === "R");
+const puedeClinica = computed(() => !["R", "F"].includes(sessionRol.value));
 const loading = ref(false);
 const error = ref("");
 const okMsg = ref("");
@@ -132,11 +136,15 @@ const MESES = [
   "diciembre",
 ];
 
-const sidebarNav = [
+const sidebarNavAll = [
   { id: "agenda", label: "AGENDA MEDICA" },
   { id: "asignar", label: "ASIGNA CITA" },
   { id: "consulta", label: "CONSULTA" },
 ] as const;
+
+const sidebarNav = computed(() =>
+  esRecepcionista.value ? sidebarNavAll.filter((n) => n.id !== "consulta") : [...sidebarNavAll],
+);
 
 const consulta = reactive({
   hosi_folio: 0,
@@ -163,6 +171,10 @@ const dxSlotsVisible = ref(1);
 const antecedentesVisitados = ref(false);
 const alergiasLista = ref<string[]>([]);
 const alergiaNueva = ref("");
+const alergiaCatalogoSel = ref("");
+const alergiaOtroTexto = ref("");
+const alergiasCatalogo = ref<{ clave: string; descripcion: string }[]>([]);
+const signosPanelOpen = ref(true);
 
 const notaCronica = reactive({
   diabetes: "negativo" as "negativo" | "positivo",
@@ -240,6 +252,51 @@ function agregarAlergia() {
   syncCronicosEnAnalisis();
 }
 
+function agregarAlergiaDesdeCatalogo() {
+  if (notaBloqueada.value) return;
+  const clave = alergiaCatalogoSel.value;
+  if (!clave) return;
+  let label = "";
+  if (clave === "OTRO") {
+    label = alergiaOtroTexto.value.trim();
+    if (!label) return;
+    alergiaOtroTexto.value = "";
+  } else {
+    label = alergiasCatalogo.value.find((a) => a.clave === clave)?.descripcion || clave;
+  }
+  if (!alergiasLista.value.some((a) => a.toLowerCase() === label.toLowerCase())) {
+    alergiasLista.value.push(label);
+  }
+  alergiaCatalogoSel.value = "";
+  syncAlergiasDetalleFromLista();
+  syncCronicosEnAnalisis();
+}
+
+async function loadAlergiasCatalogo(q = "") {
+  try {
+    const data = await post<{ rows: Record<string, unknown>[] }>("/sub/catalogos/buscar", {
+      ...props.session,
+      tipo: "alergias",
+      q,
+      limit: 40,
+    });
+    alergiasCatalogo.value = (data.rows || []).map((r) => ({
+      clave: String(r.clave || ""),
+      descripcion: String(r.descripcion || r.clave || ""),
+    }));
+    if (!alergiasCatalogo.value.some((a) => a.clave === "OTRO")) {
+      alergiasCatalogo.value.push({ clave: "OTRO", descripcion: "Otro (especificar)" });
+    }
+  } catch {
+    alergiasCatalogo.value = [
+      { clave: "PEN", descripcion: "Penicilina" },
+      { clave: "ASA", descripcion: "Ácido acetilsalicílico (Aspirina)" },
+      { clave: "LAT", descripcion: "Látex" },
+      { clave: "OTRO", descripcion: "Otro (especificar)" },
+    ];
+  }
+}
+
 function quitarAlergia(idx: number) {
   if (notaBloqueada.value) return;
   alergiasLista.value.splice(idx, 1);
@@ -267,7 +324,12 @@ function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergi
   if (campo === "alergias" && notaCronica.alergias === "negativo") {
     alergiasLista.value = [];
     alergiaNueva.value = "";
+    alergiaCatalogoSel.value = "";
+    alergiaOtroTexto.value = "";
     notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
+  }
+  if (campo === "alergias" && notaCronica.alergias === "positivo") {
+    void loadAlergiasCatalogo("");
   }
   syncCronicosEnAnalisis();
 }
@@ -366,6 +428,57 @@ function clasificacionTension(sisRaw: unknown, diaRaw: unknown): string {
   if (sis >= 130 || dia >= 85) return "PREHIPERTENSO";
   if (sis < 90 || dia < 60) return "HIPOTENSION";
   return "NORMAL";
+}
+
+/**
+ * Percentil IMC pediátrico aproximado (tablas simplificadas CDC/OMS por edad).
+ * No sustituye curvas LMS oficiales; orienta al clínico en menores de 18 años.
+ */
+function percentilImcPediatrico(
+  imc: number | null,
+  edadAnios: number,
+  sexo: string,
+): { etiqueta: string; percentilAprox: string } {
+  if (imc == null || !Number.isFinite(edadAnios) || edadAnios < 2 || edadAnios >= 18) {
+    return { etiqueta: "", percentilAprox: "" };
+  }
+  // Puntos de corte BMI aproximados (P5 / P50 / P85 / P95) por banda de edad.
+  // Fuente orientativa; validar con curvas oficiales en producción.
+  const band = edadAnios < 6 ? 0 : edadAnios < 10 ? 1 : edadAnios < 14 ? 2 : 3;
+  const isF = /^F|Mujer|FEM/i.test(sexo || "");
+  const cortes = isF
+    ? [
+        [14.0, 15.5, 17.0, 19.0],
+        [14.0, 16.0, 19.0, 22.0],
+        [15.0, 18.0, 22.0, 26.0],
+        [16.5, 19.5, 24.0, 29.0],
+      ]
+    : [
+        [14.0, 15.5, 17.0, 18.5],
+        [14.0, 16.0, 18.5, 21.0],
+        [15.0, 17.5, 21.5, 25.0],
+        [16.5, 19.0, 23.5, 28.0],
+      ];
+  const [p5, p50, p85, p95] = cortes[band];
+  let etiqueta = "ADECUADO (~P50)";
+  let percentilAprox = "~50";
+  if (imc < p5) {
+    etiqueta = "BAJO PESO (<P5)";
+    percentilAprox = "<5";
+  } else if (imc < p50) {
+    etiqueta = "ADECUADO (P5–P50)";
+    percentilAprox = "5–50";
+  } else if (imc < p85) {
+    etiqueta = "ADECUADO (P50–P85)";
+    percentilAprox = "50–85";
+  } else if (imc < p95) {
+    etiqueta = "SOBREPESO (P85–P95)";
+    percentilAprox = "85–95";
+  } else {
+    etiqueta = "OBESIDAD (≥P95)";
+    percentilAprox = "≥95";
+  }
+  return { etiqueta, percentilAprox };
 }
 
 function formatSignosResumenLinea(s: {
@@ -599,16 +712,6 @@ function citaYaLlego(row: Record<string, unknown> | null | undefined): boolean {
   return Number(row.cits_estatus) >= 2 || Number(row.cits_hrllegada) > 0;
 }
 
-const llegadaDisabled = computed(() => {
-  if (!selectedAgendaRow.value) return true;
-  return citaYaLlego(selectedAgendaRow.value);
-});
-
-const iniciarAtencionDisabled = computed(() => {
-  if (!selectedAgendaRow.value) return true;
-  return !citaYaLlego(selectedAgendaRow.value);
-});
-
 /** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
 const SOAP_MIN_CHARS = 20;
 const SOAP_SIGNOS_PLAN_RE = /SIGNOS VITALES:[^\n]*/i;
@@ -763,6 +866,34 @@ const citaCtx = reactive({
   sangre: "",
   esps_espserv: 0,
   requiere_signos: "S",
+});
+
+const edadConsultaNum = computed(() => {
+  const n = Number(String(citaCtx.edad || "").replace(/[^\d.]/g, ""));
+  return Number.isFinite(n) ? n : NaN;
+});
+
+const signosPercentilPeds = computed(() => {
+  const edad = edadConsultaNum.value;
+  if (!(edad < 18)) return null;
+  const imc = calcImc(signos.peso, signos.estatura);
+  return percentilImcPediatrico(imc, edad, citaCtx.sexo || "");
+});
+
+const llegadaDisabled = computed(() => {
+  if (!selectedAgendaRow.value) return true;
+  if (citaYaLlego(selectedAgendaRow.value)) return true;
+  const citaFecha = String(
+    selectedAgendaRow.value.citd_fechcita || fecha.value || "",
+  ).slice(0, 10);
+  if (citaFecha && citaFecha > hoyIso.value) return true;
+  return false;
+});
+
+const iniciarAtencionDisabled = computed(() => {
+  if (!puedeClinica.value) return true;
+  if (!selectedAgendaRow.value) return true;
+  return !citaYaLlego(selectedAgendaRow.value);
 });
 
 const prefix = computed(() => {
@@ -1715,6 +1846,11 @@ watch(
 );
 
 watch(tab, async (t) => {
+  if (t === "consulta" && !puedeClinica.value) {
+    tab.value = "agenda";
+    error.value = "Su rol no tiene acceso a la consulta clínica.";
+    return;
+  }
   if (t === "asignar") {
     if (!asignar.fecha || asignar.fecha < hoyIso.value) {
       asignar.fecha = fecha.value >= hoyIso.value ? fecha.value : hoyIso.value;
@@ -1881,14 +2017,15 @@ onMounted(async () => {
                   <th>PACIENTE</th>
                   <th>MOTIVO DE CONSULTA</th>
                   <th>DIAGNÓSTICO DE CONSULTA</th>
+                  <th class="siah-agenda-acciones-col">ACCIONES</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="loading && !rows.length">
-                  <td colspan="9" class="siah-agenda-empty">Cargando…</td>
+                  <td colspan="10" class="siah-agenda-empty">Cargando…</td>
                 </tr>
                 <tr v-else-if="!rows.length">
-                  <td colspan="9" class="siah-agenda-empty">Sin citas para esta fecha</td>
+                  <td colspan="10" class="siah-agenda-empty">Sin citas para esta fecha</td>
                 </tr>
                 <tr
                   v-for="(row, idx) in rows"
@@ -1896,7 +2033,7 @@ onMounted(async () => {
                   :key="String(row.hosi_folio)"
                   :class="agendaRowClasses(row)"
                   @click="selectAgendaRow(row)"
-                  @dblclick="openConsultaFromAgenda(row)"
+                  @dblclick="puedeClinica && openConsultaFromAgenda(row)"
                 >
                   <td>{{ idx + 1 }}</td>
                   <td>{{ row.hosi_folio }}</td>
@@ -1907,6 +2044,37 @@ onMounted(async () => {
                   <td class="siah-agenda-paciente">{{ row.paciente }}</td>
                   <td>{{ row.especialidad || "—" }}</td>
                   <td>—</td>
+                  <td class="siah-agenda-acciones-col" @click.stop>
+                    <div class="siah-agenda-acciones">
+                      <button
+                        type="button"
+                        class="siah-agenda-acciones__btn"
+                        :disabled="citaYaLlego(row) || String(row.citd_fechcita || fecha).slice(0, 10) > hoyIso"
+                        title="Registrar llegada"
+                        @click="selectAgendaRow(row); llegada(Number(row.hosi_folio))"
+                      >
+                        Llega
+                      </button>
+                      <button
+                        v-if="puedeClinica"
+                        type="button"
+                        class="siah-agenda-acciones__btn"
+                        :disabled="!citaYaLlego(row)"
+                        title="Iniciar atención médica"
+                        @click="openConsultaFromAgenda(row)"
+                      >
+                        Atención
+                      </button>
+                      <button
+                        type="button"
+                        class="siah-agenda-acciones__btn"
+                        title="Ver expediente"
+                        @click="openExpedienteFromAgenda(row)"
+                      >
+                        Exp.
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -2193,9 +2361,17 @@ onMounted(async () => {
 
           <div class="flex flex-wrap items-center gap-2">
             <UButton
-              label="SIGNOS VITALES"
+              :label="signosPanelOpen ? 'Ocultar signos' : 'SIGNOS VITALES'"
               color="primary"
               :variant="consultaBloqueadaSinSignos ? 'solid' : 'soft'"
+              size="sm"
+              :disabled="!consulta.hosi_folio"
+              @click="signosPanelOpen = !signosPanelOpen"
+            />
+            <UButton
+              label="Ampliar signos"
+              color="neutral"
+              variant="outline"
               size="sm"
               :disabled="!consulta.hosi_folio"
               @click="openSignosModal"
@@ -2222,6 +2398,49 @@ onMounted(async () => {
               }}
             </UBadge>
           </div>
+
+          <AtmedSectionCard v-if="signosPanelOpen && consulta.hosi_folio" title="Signos vitales (en consulta)">
+            <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <UFormField label="Pulso *"><UInput v-model="signos.pulso" size="sm" inputmode="numeric" /></UFormField>
+              <UFormField label="Resp *"><UInput v-model="signos.respiracion" size="sm" inputmode="numeric" /></UFormField>
+              <UFormField label="TA sis *"><UInput v-model="signos.tension_sis" size="sm" inputmode="numeric" /></UFormField>
+              <UFormField label="TA dia *"><UInput v-model="signos.tension_dia" size="sm" inputmode="numeric" /></UFormField>
+              <UFormField label="Temp *"><UInput v-model="signos.temperatura" size="sm" inputmode="decimal" /></UFormField>
+              <UFormField label="Peso *"><UInput v-model="signos.peso" size="sm" inputmode="decimal" /></UFormField>
+              <UFormField label="Estatura *"><UInput v-model="signos.estatura" size="sm" inputmode="decimal" /></UFormField>
+              <UFormField label="Abdominal"><UInput v-model="signos.abdominal" size="sm" inputmode="decimal" /></UFormField>
+            </div>
+            <p v-if="signosImc != null" class="text-xs m-0 mt-2">
+              IMC: <strong>{{ signosImc }}</strong>
+              <span v-if="signosClasificacion"> · {{ signosClasificacion }}</span>
+              <span v-if="signosTensionClasificacion"> · TA {{ signosTensionClasificacion }}</span>
+            </p>
+            <UAlert
+              v-if="signosPercentilPeds?.etiqueta"
+              color="info"
+              variant="subtle"
+              class="mt-2"
+              :title="`Percentil pediátrico (edad ${edadConsultaNum} a.): ${signosPercentilPeds.etiqueta}`"
+              :description="`Estimación orientativa (P${signosPercentilPeds.percentilAprox}). Validar con curvas oficiales.`"
+            />
+            <div class="flex flex-wrap justify-end gap-2 mt-2">
+              <UButton
+                label="Copiar últimos"
+                size="sm"
+                color="neutral"
+                variant="outline"
+                :disabled="!ultimosSignos"
+                @click="copiarUltimosSignos"
+              />
+              <UButton
+                label="Grabar signos vitales"
+                size="sm"
+                color="primary"
+                :loading="loading"
+                @click="doSignos"
+              />
+            </div>
+          </AtmedSectionCard>
 
           <UAlert
             v-if="consultaBloqueadaSinSignos"
@@ -2383,24 +2602,49 @@ onMounted(async () => {
                 </button>
               </div>
               <div v-if="notaCronica.alergias === 'positivo'" class="mt-3 space-y-2">
-                <p class="text-[0.7rem] font-semibold text-muted m-0">Detalle de alergias</p>
+                <p class="text-[0.7rem] font-semibold text-muted m-0">Detalle de alergias (catálogo)</p>
                 <div class="flex flex-wrap items-end gap-2">
-                  <UFormField label="Agregar alergia" class="min-w-0 flex-1" :ui="notaFieldUi">
+                  <UFormField label="Alérgeno" class="min-w-[14rem] flex-1" :ui="notaFieldUi">
+                    <select
+                      v-model="alergiaCatalogoSel"
+                      class="siah-input w-full"
+                      :disabled="notaBloqueada"
+                      @focus="loadAlergiasCatalogo('')"
+                    >
+                      <option value="">Seleccione…</option>
+                      <option
+                        v-for="a in alergiasCatalogo"
+                        :key="a.clave"
+                        :value="a.clave"
+                      >
+                        {{ a.descripcion }}
+                      </option>
+                    </select>
+                  </UFormField>
+                  <UFormField
+                    v-if="alergiaCatalogoSel === 'OTRO'"
+                    label="Especifique"
+                    class="min-w-[12rem] flex-1"
+                    :ui="notaFieldUi"
+                  >
                     <UInput
-                      v-model="alergiaNueva"
+                      v-model="alergiaOtroTexto"
                       size="sm"
                       class="w-full min-w-0"
                       :disabled="notaBloqueada"
-                      placeholder="Ej. penicilina"
-                      @keydown.enter.prevent="agregarAlergia"
+                      placeholder="Describa el alérgeno"
                     />
                   </UFormField>
                   <UButton
                     label="Agregar"
                     color="primary"
                     size="sm"
-                    :disabled="notaBloqueada || !alergiaNueva.trim()"
-                    @click="agregarAlergia"
+                    :disabled="
+                      notaBloqueada ||
+                      !alergiaCatalogoSel ||
+                      (alergiaCatalogoSel === 'OTRO' && !alergiaOtroTexto.trim())
+                    "
+                    @click="agregarAlergiaDesdeCatalogo"
                   />
                 </div>
                 <ul v-if="alergiasLista.length" class="m-0 list-none space-y-1 p-0">
@@ -2420,7 +2664,9 @@ onMounted(async () => {
                     />
                   </li>
                 </ul>
-                <p v-else class="text-[0.7rem] text-muted m-0">Agregue al menos una alergia.</p>
+                <p v-else class="text-[0.7rem] text-muted m-0">
+                  Seleccione del catálogo o use «Otro» para texto libre.
+                </p>
               </div>
             </AtmedSectionCard>
 
@@ -2684,12 +2930,13 @@ onMounted(async () => {
                   @click="openRecetaConsulta"
                 />
                 <UButton
-                  label="SOLICITUDES"
+                  label="CONSULTAR SOLICITUDES"
                   color="primary"
                   variant="soft"
                   size="sm"
                   icon="i-lucide-flask-conical"
                   :disabled="!consulta.hosi_folio"
+                  title="Solo consulta; el alta es por forma 11-5"
                   @click="openServiciosModal"
                 />
                 <UButton
@@ -2769,6 +3016,7 @@ onMounted(async () => {
       :folio="consulta.hosi_folio"
       :paciente-line="`${citaCtx.paciente || 'Paciente'} · Folio ${citaCtx.hosi_folio} · Ficha ${citaCtx.ficha}-${citaCtx.codigo}`"
       :diagnostico="[consulta.diai_clacie1, consulta.diagnosticoTexto].filter(Boolean).join(' ').trim()"
+      read-only
       @close="serviciosModalOpen = false"
     />
   </div>
@@ -3239,6 +3487,57 @@ onMounted(async () => {
   overflow: auto;
   max-height: 28rem;
   border: 1px solid #888;
+}
+
+.siah-agenda-acciones-col {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: inherit;
+  box-shadow: -4px 0 6px -4px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+
+thead .siah-agenda-acciones-col {
+  background: var(--ui-primary, #0aa7d6);
+  z-index: 3;
+}
+
+.siah-agenda-acciones {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.2rem;
+}
+
+.siah-agenda-acciones__btn {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid #888;
+  border-radius: 0.25rem;
+  background: #fff;
+  cursor: pointer;
+  color: #0a4a6e;
+}
+
+.siah-agenda-row--confirmar .siah-agenda-acciones-col {
+  background: #ffe5e5;
+}
+
+.siah-agenda-row--espera .siah-agenda-acciones-col {
+  background: #e8f7e8;
+}
+
+.siah-agenda-row--atendido .siah-agenda-acciones-col {
+  background: #dceeff;
+}
+
+.siah-agenda-row--diferido .siah-agenda-acciones-col {
+  background: #fff3cd;
+}
+
+.siah-agenda-table td.siah-agenda-acciones-col {
+  background: #fff;
 }
 
 .siah-agenda-table {
