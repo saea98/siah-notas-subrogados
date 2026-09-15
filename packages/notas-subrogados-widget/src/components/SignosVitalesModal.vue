@@ -8,6 +8,7 @@ type SignosCaptura = {
   peso: string;
   estatura: string;
   abdominal: string;
+  saturacion: string;
 };
 
 type SignosRow = {
@@ -19,6 +20,7 @@ type SignosRow = {
   peso?: string | number;
   estatura?: string | number;
   abdominal?: string | number;
+  saturacion?: string | number;
 };
 
 const open = defineModel<boolean>("open", { required: true });
@@ -125,6 +127,9 @@ const emit = defineEmits<{
               <UFormField label="P. abdominal (cm)">
                 <UInput v-model="signos.abdominal" inputmode="numeric" size="sm" />
               </UFormField>
+              <UFormField label="Sat. O₂ (%)">
+                <UInput v-model="signos.saturacion" inputmode="numeric" size="sm" placeholder="50–100" />
+              </UFormField>
             </div>
           </UCard>
 
@@ -138,7 +143,7 @@ const emit = defineEmits<{
             <template #header>
               <div class="flex w-full flex-wrap items-center justify-between gap-2">
                 <span class="text-xs font-bold uppercase tracking-wide text-inverted">
-                  Últimos signos vitales registrados
+                  Antecedente · últimos signos vitales
                 </span>
                 <span v-if="ultimosFechaLabel" class="text-[0.65rem] font-semibold text-warning-300">
                   {{ ultimosFechaLabel }}
@@ -189,6 +194,9 @@ const emit = defineEmits<{
               </UFormField>
               <UFormField label="P. abdominal (cm)">
                 <UInput :model-value="ultimosSignos.abdominal ?? '—'" readonly size="sm" />
+              </UFormField>
+              <UFormField label="Sat. O₂ (%)">
+                <UInput :model-value="ultimosSignos.saturacion ?? '—'" readonly size="sm" />
               </UFormField>
               <UButton
                 v-if="ultimosSignos"

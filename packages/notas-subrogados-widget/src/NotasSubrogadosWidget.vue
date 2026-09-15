@@ -183,6 +183,14 @@ const notaCronica = reactive({
   alergias: "negativo" as "negativo" | "positivo",
   alergiasDetalle: "",
 });
+/** Estado de censo al abrir la consulta (para confirmar altas nuevas). */
+const censoBase = reactive({
+  diabetes: false,
+  hipertension: false,
+  obesidad: false,
+});
+const censoConfirmOpen = ref(false);
+const censoConfirmPendientes = ref<string[]>([]);
 
 const procedimientosSel = ref<{ clave: string; descripcion: string }[]>([]);
 const procQ = ref("");
@@ -336,10 +344,11 @@ function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergi
 
 function syncCronicosEnAnalisis() {
   if (notaBloqueada.value) return;
+  const flag = (v: string) => (v === "positivo" ? "REGISTRADA" : "NO REGISTRADA");
   const lineas = [
-    `ANTECEDENTES CRONICOS: DIABETES ${notaCronica.diabetes.toUpperCase()}, ` +
-      `HIPERTENSION ${notaCronica.hipertension.toUpperCase()}, ` +
-      `OBESIDAD ${notaCronica.obesidad.toUpperCase()}.`,
+    `ANTECEDENTES CRONICOS: DIABETES ${flag(notaCronica.diabetes)}, ` +
+      `HIPERTENSION ${flag(notaCronica.hipertension)}, ` +
+      `OBESIDAD/SOBREPESO ${flag(notaCronica.obesidad)}.`,
   ];
   if (notaCronica.alergias === "positivo") {
     const det = (notaCronica.alergiasDetalle || "").trim() || "ALERGIA REFERIDA";
@@ -376,6 +385,7 @@ const signos = reactive({
   peso: "",
   estatura: "",
   abdominal: "",
+  saturacion: "",
 });
 
 type SignosRow = {
@@ -388,6 +398,7 @@ type SignosRow = {
   peso?: string | number;
   estatura?: string | number;
   abdominal?: string | number;
+  saturacion?: string | number;
   fecha?: string;
   created_at?: string;
 };
@@ -490,6 +501,7 @@ function formatSignosResumenLinea(s: {
   peso?: unknown;
   estatura?: unknown;
   abdominal?: unknown;
+  saturacion?: unknown;
 }): string {
   const imc = calcImc(s.peso, s.estatura);
   const imcTxt = imc != null ? String(imc) : "—";
@@ -506,6 +518,7 @@ function formatSignosResumenLinea(s: {
     `ESTATURA: ${s.estatura || "—"} M`,
     `IMC: ${imcTxt} KG/M² (${clas})`,
     `PERIMETRO ABDOMINAL: ${s.abdominal || "—"} CMS`,
+    `SATURACION O2: ${s.saturacion || "—"} %`,
   ].join(" ");
 }
 
@@ -709,7 +722,23 @@ function applyMedicoKey(key: string) {
 
 function citaYaLlego(row: Record<string, unknown> | null | undefined): boolean {
   if (!row) return false;
-  return Number(row.cits_estatus) >= 2 || Number(row.cits_hrllegada) > 0;
+  return Number(row.cits_hrllegada) > 0;
+}
+
+function citaAtendida(row: Record<string, unknown> | null | undefined): boolean {
+  return Number(row?.cits_estatus) >= 4;
+}
+
+function puedeRevertirLlegada(row: Record<string, unknown> | null | undefined): boolean {
+  if (!row || citaAtendida(row)) return false;
+  const est = Number(row.cits_estatus);
+  return Number(row.cits_hrllegada) > 0 || est === 2 || est === 3;
+}
+
+function puedeIniciarAtencion(row: Record<string, unknown> | null | undefined): boolean {
+  if (!row || citaAtendida(row)) return false;
+  const est = Number(row.cits_estatus);
+  return Number(row.cits_hrllegada) > 0 || est === 2 || est === 3;
 }
 
 /** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
@@ -788,6 +817,7 @@ function limpiarSignosCaptura() {
   signos.peso = "";
   signos.estatura = "";
   signos.abdominal = "";
+  signos.saturacion = "";
 }
 
 async function loadUltimosSignos() {
@@ -846,6 +876,7 @@ function copiarUltimosSignos() {
   signos.peso = String(u.peso ?? "");
   signos.estatura = String(u.estatura ?? "");
   signos.abdominal = String(u.abdominal ?? "");
+  signos.saturacion = String((u as SignosRow).saturacion ?? "");
 }
 
 /** Contexto de la cita en uso (acomodo tipo siah-web). */
@@ -882,7 +913,8 @@ const signosPercentilPeds = computed(() => {
 
 const llegadaDisabled = computed(() => {
   if (!selectedAgendaRow.value) return true;
-  if (citaYaLlego(selectedAgendaRow.value)) return true;
+  if (citaAtendida(selectedAgendaRow.value)) return true;
+  if (Number(selectedAgendaRow.value.cits_hrllegada) > 0) return true;
   const citaFecha = String(
     selectedAgendaRow.value.citd_fechcita || fecha.value || "",
   ).slice(0, 10);
@@ -890,10 +922,15 @@ const llegadaDisabled = computed(() => {
   return false;
 });
 
+const revertirLlegadaDisabled = computed(() => {
+  if (!selectedAgendaRow.value) return true;
+  return !puedeRevertirLlegada(selectedAgendaRow.value);
+});
+
 const iniciarAtencionDisabled = computed(() => {
   if (!puedeClinica.value) return true;
   if (!selectedAgendaRow.value) return true;
-  return !citaYaLlego(selectedAgendaRow.value);
+  return !puedeIniciarAtencion(selectedAgendaRow.value);
 });
 
 const prefix = computed(() => {
@@ -1110,27 +1147,75 @@ function requireSelectedAgenda(action: string): Record<string, unknown> | null {
 async function llegadaSelected() {
   const row = requireSelectedAgenda("registrar llegada");
   if (!row) return;
-  if (citaYaLlego(row)) {
+  if (citaAtendida(row)) {
+    error.value = "La cita ya está atendida; no se puede registrar llegada";
+    return;
+  }
+  if (Number(row.cits_hrllegada) > 0) {
     error.value = "La llegada ya fue registrada para esta cita";
     return;
   }
   await llegada(Number(row.hosi_folio));
 }
 
+async function revertirLlegadaSelected() {
+  const row = requireSelectedAgenda("revertir llegada");
+  if (!row) return;
+  if (!puedeRevertirLlegada(row)) {
+    error.value = "No hay llegada que revertir, o la cita ya está atendida";
+    return;
+  }
+  loading.value = true;
+  error.value = "";
+  try {
+    const res = await post<{ mensaje: string }>("/sub/atmed/llegada/revertir", {
+      ...props.session,
+      hosi_folio: Number(row.hosi_folio),
+    });
+    okMsg.value = res.mensaje || "Llegada revertida";
+    await load();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Error al revertir llegada";
+  } finally {
+    loading.value = false;
+  }
+}
+
 function confirmarCitaSelected() {
   const row = requireSelectedAgenda("confirmar");
   if (!row) return;
+  if (citaAtendida(row)) {
+    error.value = "La cita ya está atendida; no se puede cambiar el estatus";
+    return;
+  }
   if (Number(row.cits_estatus) !== 1) {
     okMsg.value = `La cita ${row.hosi_folio} ya está confirmada o en otro estatus`;
     return;
   }
-  okMsg.value = `Cita ${row.hosi_folio} confirmada (estatus inicial registrado)`;
+  okMsg.value = `Cita ${row.hosi_folio} en Por confirmar (estatus inicial)`;
 }
 
-function diferirCitaSelected() {
+async function diferirCitaSelected() {
   const row = requireSelectedAgenda("diferir");
   if (!row) return;
-  okMsg.value = `Diferimiento de cita ${row.hosi_folio} pendiente de implementar en API`;
+  if (citaAtendida(row)) {
+    error.value = "La cita ya está atendida; no se puede diferir";
+    return;
+  }
+  loading.value = true;
+  error.value = "";
+  try {
+    const res = await post<{ mensaje: string }>("/sub/atmed/diferir", {
+      ...props.session,
+      hosi_folio: Number(row.hosi_folio),
+    });
+    okMsg.value = res.mensaje || `Cita ${row.hosi_folio} diferida`;
+    await load();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Error al diferir cita";
+  } finally {
+    loading.value = false;
+  }
 }
 
 function formatFechaDisplay(iso: string): string {
@@ -1153,6 +1238,7 @@ function citaStatusClass(estatus: unknown): string {
   if (s === 1) return "siah-agenda-row--confirmar";
   if (s === 2 || s === 3) return "siah-agenda-row--espera";
   if (s === 4) return "siah-agenda-row--atendido";
+  if (s === 5 || s === 9) return "siah-agenda-row--diferido";
   return "siah-agenda-row--diferido";
 }
 
@@ -1516,7 +1602,24 @@ function selectCita(row: Record<string, unknown>) {
   }
   // Estatus 4 = atendida / nota grabada (legacy).
   notaBloqueada.value = Number(row.cits_estatus) === 4;
+  consultaOkLocal.value = notaBloqueada.value;
   if (consultaLoadedFolio.value !== folio) {
+    // Evitar arrastrar dx / procedimientos / SOAP de otra consulta.
+    consulta.sintomas = "";
+    consulta.objetivo = "";
+    consulta.analisis = "";
+    consulta.plan = "";
+    consulta.diai_clacie1 = "";
+    consulta.diai_clacie2 = "";
+    consulta.diai_clacie3 = "";
+    consulta.motivoCie10 = "";
+    consulta.motivoConsulta = "";
+    consulta.diagnosticoTexto = "";
+    consulta.diagnosticoTexto2 = "";
+    consulta.diagnosticoTexto3 = "";
+    dxSlotsVisible.value = 1;
+    procedimientosSel.value = [];
+    procQ.value = "";
     consultaLoadedFolio.value = 0;
   }
 }
@@ -1601,6 +1704,9 @@ async function loadConsultaContext(force = false) {
     if (!notaBloqueada.value) {
       consulta.sintomas = String(preData.sintomas || consulta.sintomas || "");
       const cr = (preData.cronicos as Record<string, boolean>) || {};
+      censoBase.diabetes = Boolean(cr.diabetes);
+      censoBase.hipertension = Boolean(cr.hipertension);
+      censoBase.obesidad = Boolean(cr.obesidad);
       notaCronica.diabetes = cr.diabetes ? "positivo" : "negativo";
       notaCronica.hipertension = cr.hipertension ? "positivo" : "negativo";
       notaCronica.obesidad = cr.obesidad ? "positivo" : "negativo";
@@ -1723,6 +1829,14 @@ async function verCitaExistente(row?: Record<string, unknown>) {
   if (found) selectedAgendaRow.value = found;
 }
 
+function altasCensoPendientes(): string[] {
+  const out: string[] = [];
+  if (notaCronica.diabetes === "positivo" && !censoBase.diabetes) out.push("diabetes");
+  if (notaCronica.hipertension === "positivo" && !censoBase.hipertension) out.push("hipertensión");
+  if (notaCronica.obesidad === "positivo" && !censoBase.obesidad) out.push("obesidad/sobrepeso");
+  return out;
+}
+
 async function doConsulta() {
   if (!consulta.hosi_folio) {
     error.value = "Seleccione una cita (folio)";
@@ -1746,6 +1860,17 @@ async function doConsulta() {
   syncAlergiasDetalleFromLista();
   syncCronicosEnAnalisis();
   consulta.conn_tipocon = consulta.enfermedadSub ? "S" : "P";
+  const altas = altasCensoPendientes();
+  if (altas.length) {
+    censoConfirmPendientes.value = altas;
+    censoConfirmOpen.value = true;
+    return;
+  }
+  await grabarConsultaConfirmada();
+}
+
+async function grabarConsultaConfirmada() {
+  censoConfirmOpen.value = false;
   loading.value = true;
   error.value = "";
   try {
@@ -1773,6 +1898,9 @@ async function doConsulta() {
     okMsg.value = res.mensaje;
     consultaOkLocal.value = true;
     notaBloqueada.value = true;
+    censoBase.diabetes = notaCronica.diabetes === "positivo";
+    censoBase.hipertension = notaCronica.hipertension === "positivo";
+    censoBase.obesidad = notaCronica.obesidad === "positivo";
     await load();
     await loadRecetasConsulta();
   } catch (e) {
@@ -1806,15 +1934,25 @@ async function doSignos() {
   loading.value = true;
   error.value = "";
   try {
-    const res = await post<{ mensaje: string }>("/sub/atmed/signos", { ...props.session, ...signos });
+    const res = await post<{ mensaje: string; record?: { obesidad_censo?: boolean } }>(
+      "/sub/atmed/signos",
+      { ...props.session, ...signos },
+    );
     okMsg.value = res.mensaje;
     await loadUltimosSignos();
     const resumen = formatSignosResumenLinea(signos);
     syncSignosEnPlan(resumen);
-    // Reflejar crónico hipertenso si la toma lo sugiere (solo refuerzo UI; censo manda).
     const ta = clasificacionTension(signos.tension_sis, signos.tension_dia);
     if (ta === "HIPERTENSO" && notaCronica.hipertension === "negativo") {
       notaCronica.hipertension = "positivo";
+    }
+    const imc = calcImc(signos.peso, signos.estatura);
+    if (imc != null) {
+      notaCronica.obesidad = imc >= 25 ? "positivo" : "negativo";
+      if (res.record?.obesidad_censo != null) {
+        censoBase.obesidad = Boolean(res.record.obesidad_censo);
+      }
+      syncCronicosEnAnalisis();
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error al grabar signos";
@@ -1921,13 +2059,23 @@ onMounted(async () => {
             @click="llegadaSelected"
           />
           <UButton
-            label="DIFIERE CITA"
-            icon="i-lucide-x"
-            color="error"
+            label="REVERTIR LLEGADA"
+            icon="i-lucide-undo-2"
+            color="neutral"
             variant="soft"
             size="xs"
             block
-            :disabled="loading"
+            :disabled="loading || revertirLlegadaDisabled"
+            @click="revertirLlegadaSelected"
+          />
+          <UButton
+            label="DIFIERE CITA"
+            icon="i-lucide-calendar-clock"
+            color="neutral"
+            variant="soft"
+            size="xs"
+            block
+            :disabled="loading || !selectedAgendaRow || citaAtendida(selectedAgendaRow)"
             @click="diferirCitaSelected"
           />
         </div>
@@ -2408,7 +2556,8 @@ onMounted(async () => {
               <UFormField label="Temp *"><UInput v-model="signos.temperatura" size="sm" inputmode="decimal" /></UFormField>
               <UFormField label="Peso *"><UInput v-model="signos.peso" size="sm" inputmode="decimal" /></UFormField>
               <UFormField label="Estatura *"><UInput v-model="signos.estatura" size="sm" inputmode="decimal" /></UFormField>
-              <UFormField label="Abdominal"><UInput v-model="signos.abdominal" size="sm" inputmode="decimal" /></UFormField>
+              <UFormField label="Abdominal"><UInput v-model="signos.abdominal" size="sm" inputmode="numeric" /></UFormField>
+              <UFormField label="Sat. O₂ %"><UInput v-model="signos.saturacion" size="sm" inputmode="numeric" placeholder="50–100" /></UFormField>
             </div>
             <p v-if="signosImc != null" class="text-xs m-0 mt-2">
               IMC: <strong>{{ signosImc }}</strong>
@@ -2425,11 +2574,12 @@ onMounted(async () => {
             />
             <div class="flex flex-wrap justify-end gap-2 mt-2">
               <UButton
-                label="Copiar últimos"
+                label="Copiar antecedente"
                 size="sm"
                 color="neutral"
                 variant="outline"
                 :disabled="!ultimosSignos"
+                :title="ultimosFechaLabel || 'Última toma del paciente (cualquier unidad)'"
                 @click="copiarUltimosSignos"
               />
               <UButton
@@ -2533,10 +2683,11 @@ onMounted(async () => {
               </div>
             </div>
 
-            <AtmedSectionCard title="Enfermedad crónico degenerativa">
+            <AtmedSectionCard title="Síndrome metabólico">
               <p class="text-[0.7rem] text-muted m-0 mb-2">
-                Prellenado desde censo. Pulse el badge para marcar positivo/negativo (se refleja en
-                Análisis). Las alergias positivas se capturan como lista al grabar la consulta.
+                Prellenado desde censo (diabetes, hipertensión, obesidad/sobrepeso). Pulse el badge para
+                marcar registrada / no registrada (se refleja en Análisis). Las alergias positivas se
+                capturan como lista al grabar la consulta.
                 <span v-if="notaBloqueada" class="font-semibold text-warning"> Nota grabada: solo lectura.</span>
               </p>
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -2552,7 +2703,7 @@ onMounted(async () => {
                     variant="subtle"
                     size="sm"
                   >
-                    {{ notaCronica.diabetes === "positivo" ? "POSITIVO" : "NEGATIVO" }}
+                    {{ notaCronica.diabetes === "positivo" ? "REGISTRADA" : "NO REGISTRADA" }}
                   </UBadge>
                 </button>
                 <button
@@ -2567,7 +2718,7 @@ onMounted(async () => {
                     variant="subtle"
                     size="sm"
                   >
-                    {{ notaCronica.hipertension === "positivo" ? "POSITIVO" : "NEGATIVO" }}
+                    {{ notaCronica.hipertension === "positivo" ? "REGISTRADA" : "NO REGISTRADA" }}
                   </UBadge>
                 </button>
                 <button
@@ -2582,7 +2733,7 @@ onMounted(async () => {
                     variant="subtle"
                     size="sm"
                   >
-                    {{ notaCronica.obesidad === "positivo" ? "POSITIVO" : "NEGATIVO" }}
+                    {{ notaCronica.obesidad === "positivo" ? "REGISTRADA" : "NO REGISTRADA" }}
                   </UBadge>
                 </button>
                 <button
@@ -2597,7 +2748,7 @@ onMounted(async () => {
                     variant="subtle"
                     size="sm"
                   >
-                    {{ notaCronica.alergias === "positivo" ? "POSITIVO" : "NEGATIVO" }}
+                    {{ notaCronica.alergias === "positivo" ? "REGISTRADAS" : "NO REGISTRADAS" }}
                   </UBadge>
                 </button>
               </div>
@@ -2964,7 +3115,7 @@ onMounted(async () => {
               color="success"
               variant="subtle"
               class="sticky bottom-2 z-10"
-              title="Consulta guardada — la nota queda en solo lectura."
+              title="Consulta guardada — la nota queda en solo lectura. Use RECETA / SOLICITUDES como acciones complementarias."
             />
 
             <div class="flex justify-end gap-2 pt-1">
@@ -2977,7 +3128,7 @@ onMounted(async () => {
                 @click="limpiarConsulta"
               />
               <UButton
-                label="GRABA CONSULTA"
+                :label="notaBloqueada ? 'NOTA GRABADA' : 'GRABAR NOTA'"
                 color="primary"
                 size="sm"
                 :loading="loading"
@@ -2989,6 +3140,23 @@ onMounted(async () => {
         </div>
       </main>
     </div>
+
+    <UModal v-model:open="censoConfirmOpen" :ui="{ content: 'max-w-md w-full' }">
+      <template #content>
+        <div class="space-y-3 p-4">
+          <h3 class="text-sm font-bold uppercase text-highlighted m-0">Confirmar alta a censo</h3>
+          <p class="text-sm text-muted m-0">
+            El paciente no estaba registrado en:
+            <strong>{{ censoConfirmPendientes.join(", ") }}</strong>.
+            ¿Desea darlo de alta al grabar la nota? Se guardará médico y fecha-hora de clasificación.
+          </p>
+          <div class="flex justify-end gap-2">
+            <UButton label="Cancelar" color="neutral" variant="outline" size="sm" @click="censoConfirmOpen = false" />
+            <UButton label="Confirmar y grabar" color="primary" size="sm" :loading="loading" @click="grabarConsultaConfirmada" />
+          </div>
+        </div>
+      </template>
+    </UModal>
 
     <SignosVitalesModal
       v-model:open="signosModalOpen"
