@@ -30,7 +30,14 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   openExpediente: [
-    payload: { ficha: string; codigo: string; empresa?: number; hosi_folio?: number },
+    payload: {
+      ficha: string;
+      codigo: string;
+      empresa?: number;
+      hosi_folio?: number;
+      unitrab?: number | string;
+      pg_schema?: string;
+    },
   ];
   openReceta: [
     payload: {
@@ -49,6 +56,11 @@ const showChromeNav = computed(() => props.showModuleNav && !props.embedded);
 const sessionRol = computed(() => String(props.session?.rol || "").trim().toUpperCase());
 const esRecepcionista = computed(() => sessionRol.value === "R");
 const puedeClinica = computed(() => !["R", "F"].includes(sessionRol.value));
+/** Médico autenticado: no cambia de médico/especialidad ajenos. */
+const medicoSesionLocked = ref(false);
+const medicoSesionFicha = ref("");
+const tipoconMotivo = ref("");
+const citaEstatusCat = ref<{ cits_estatus: number; etiqueta: string }[]>([]);
 const loading = ref(false);
 const error = ref("");
 const okMsg = ref("");
@@ -155,11 +167,15 @@ const consulta = reactive({
   diai_clacie1: "",
   diai_clacie2: "",
   diai_clacie3: "",
+  diai_clacie4: "",
+  diai_clacie5: "",
   motivoCie10: "",
   motivoConsulta: "",
   diagnosticoTexto: "",
   diagnosticoTexto2: "",
   diagnosticoTexto3: "",
+  diagnosticoTexto4: "",
+  diagnosticoTexto5: "",
   enfermedadPrimeraVez: true,
   enfermedadSub: false,
   conn_tipocon: "P",
@@ -168,6 +184,12 @@ const consulta = reactive({
 const notaBloqueada = ref(false);
 const consultaOkLocal = ref(false);
 const dxSlotsVisible = ref(1);
+const adendumOpen = ref(false);
+const adendumTexto = ref("");
+const historialNotas = ref<Record<string, unknown>[]>([]);
+const agendaFiltroEsp = ref<number | null>(null);
+const agendaFiltroMed = ref("");
+const agendaFiltroEstatus = ref<number | null>(null);
 const antecedentesVisitados = ref(false);
 const alergiasLista = ref<string[]>([]);
 const alergiaNueva = ref("");
@@ -201,31 +223,61 @@ function onPickCieMotivo(hit: { clave: string; descripcion: string }) {
   if (!consulta.motivoConsulta.trim()) consulta.motivoConsulta = hit.descripcion;
 }
 
+function setTipoConsulta(primeraVez: boolean, motivo?: string) {
+  if (notaBloqueada.value) return;
+  consulta.enfermedadPrimeraVez = primeraVez;
+  consulta.enfermedadSub = !primeraVez;
+  consulta.conn_tipocon = primeraVez ? "P" : "S";
+  tipoconMotivo.value = motivo ?? "Marcado manualmente por el médico";
+}
+
+async function aplicarTipoconSugerido(cie?: string) {
+  if (notaBloqueada.value || !citaCtx.ficha) return;
+  try {
+    const res = await post<{ record?: Record<string, unknown>; mensaje?: string }>(
+      "/sub/atmed/consulta/tipocon-sugerido",
+      {
+        ...props.session,
+        ficha: citaCtx.ficha,
+        codigo: citaCtx.codigo || "00",
+        empresa: citaCtx.empresa || 0,
+        esps_espserv: citaCtx.esps_espserv || undefined,
+        diai_clacie1: (cie || consulta.diai_clacie1 || "").trim(),
+      },
+    );
+    const r = res.record || {};
+    const tip = String(r.conn_tipocon || "P").toUpperCase().slice(0, 1) || "P";
+    setTipoConsulta(tip !== "S", String(r.motivo || res.mensaje || ""));
+  } catch {
+    /* sugerencia opcional */
+  }
+}
+
 function onPickCieDx(hit: { clave: string; descripcion: string }, slot = 1) {
   if (notaBloqueada.value) return;
   const clave = hit.clave.slice(0, 5).toUpperCase();
   if (slot === 1) {
     consulta.diai_clacie1 = clave;
     consulta.diagnosticoTexto = hit.descripcion;
+    void aplicarTipoconSugerido(clave);
   } else if (slot === 2) {
     consulta.diai_clacie2 = clave;
     consulta.diagnosticoTexto2 = hit.descripcion;
-  } else {
+  } else if (slot === 3) {
     consulta.diai_clacie3 = clave;
     consulta.diagnosticoTexto3 = hit.descripcion;
+  } else if (slot === 4) {
+    consulta.diai_clacie4 = clave;
+    consulta.diagnosticoTexto4 = hit.descripcion;
+  } else {
+    consulta.diai_clacie5 = clave;
+    consulta.diagnosticoTexto5 = hit.descripcion;
   }
-}
-
-function setTipoConsulta(primeraVez: boolean) {
-  if (notaBloqueada.value) return;
-  consulta.enfermedadPrimeraVez = primeraVez;
-  consulta.enfermedadSub = !primeraVez;
-  consulta.conn_tipocon = primeraVez ? "P" : "S";
 }
 
 function agregarDiagnostico() {
   if (notaBloqueada.value) return;
-  if (dxSlotsVisible.value < 3) dxSlotsVisible.value += 1;
+  if (dxSlotsVisible.value < 5) dxSlotsVisible.value += 1;
 }
 
 function onPickProcedimiento(hit: { clave: string; descripcion: string }) {
@@ -895,9 +947,40 @@ const citaCtx = reactive({
   edad: "",
   sexo: "",
   sangre: "",
+  fecnac: "",
   esps_espserv: 0,
   requiere_signos: "S",
+  unitrab_nota: "" as string | number,
+  pg_schema: "" as string,
 });
+
+const rowsFiltradas = computed(() => {
+  return rows.value.filter((r) => {
+    if (agendaFiltroEsp.value != null && Number(r.esps_espserv) !== agendaFiltroEsp.value) return false;
+    if (agendaFiltroMed.value && String(r.medc_ficha || "") !== agendaFiltroMed.value) return false;
+    if (agendaFiltroEstatus.value != null && Number(r.cits_estatus) !== agendaFiltroEstatus.value) return false;
+    return true;
+  });
+});
+
+/** En sesión médica: solo sus propias fichas/especialidades. */
+const medicosAsignables = computed(() => {
+  if (!medicoSesionLocked.value || !medicoSesionFicha.value) return medicos.value;
+  return medicos.value.filter((m) => m.medc_ficha === medicoSesionFicha.value);
+});
+
+const agendaFiltroEstatusItems = computed(() => [
+  { label: "Todos los estatus", value: null as number | null },
+  ...(citaEstatusCat.value.length
+    ? citaEstatusCat.value
+        .filter((e) => [1, 2, 3, 4].includes(e.cits_estatus))
+        .map((e) => ({ label: e.etiqueta, value: e.cits_estatus as number | null }))
+    : [
+        { label: "Por confirmar", value: 1 as number | null },
+        { label: "En espera", value: 2 as number | null },
+        { label: "Atendida", value: 4 as number | null },
+      ]),
+]);
 
 const edadConsultaNum = computed(() => {
   const n = Number(String(citaCtx.edad || "").replace(/[^\d.]/g, ""));
@@ -1454,13 +1537,19 @@ async function loadBeneficiariosPorFicha() {
 
 async function loadCatalogos() {
   try {
-    const [esp, med] = await Promise.all([
+    const [esp, med, ses, est] = await Promise.all([
       post<{ rows: Record<string, unknown>[] }>("/sub/atmed/especialidades", props.session),
       post<{ rows: Record<string, unknown>[] }>("/sub/atmed/medicos", {
         ...props.session,
         // Sin filtro: la especialidad la define el médico seleccionado
         esps_espserv: null,
       }),
+      post<{ record?: Record<string, unknown> }>("/sub/atmed/medico-sesion", props.session).catch(
+        () => ({ record: {} }),
+      ),
+      post<{ rows?: Record<string, unknown>[] }>("/sub/atmed/cita-estatus", props.session).catch(
+        () => ({ rows: [] }),
+      ),
     ]);
     especialidades.value = (esp.rows || []).map((r) => ({
       esps_espserv: Number(r.esps_espserv),
@@ -1473,6 +1562,26 @@ async function loadCatalogos() {
       medc_nombre: String(r.medc_nombre || ""),
       esps_espserv: Number(r.esps_espserv),
     }));
+    citaEstatusCat.value = (est.rows || []).map((r) => ({
+      cits_estatus: Number(r.cits_estatus),
+      etiqueta: String(r.etiqueta || r.cits_estatus),
+    }));
+    const sesRec = ses.record || {};
+    if (sesRec.medc_ficha && sesRec.esps_espserv != null) {
+      asignar.medc_ficha = String(sesRec.medc_ficha);
+      asignar.medc_codigo = String(sesRec.medc_codigo || "00");
+      asignar.esps_espserv = Number(sesRec.esps_espserv);
+      asignar.medicoKey = `${asignar.medc_ficha}|${asignar.medc_codigo}|${asignar.esps_espserv}`;
+      if (!esRecepcionista.value) {
+        medicoSesionLocked.value = true;
+        medicoSesionFicha.value = asignar.medc_ficha;
+        agendaFiltroMed.value = asignar.medc_ficha;
+        agendaFiltroEsp.value = Number(sesRec.esps_espserv);
+      }
+    } else {
+      medicoSesionLocked.value = false;
+      medicoSesionFicha.value = "";
+    }
     const currentKey = asignar.medicoKey;
     const stillThere = medicos.value.some((m) => medicoOptionKey(m) === currentKey);
     if (medicos.value.length && !stillThere) {
@@ -1513,8 +1622,14 @@ async function loadHoras() {
 async function llegada(folio: number) {
   loading.value = true;
   try {
-    await post("/sub/atmed/llegada", { ...props.session, hosi_folio: folio });
-    okMsg.value = "Llegada registrada";
+    const res = await post<{ mensaje?: string; record?: Record<string, unknown> }>("/sub/atmed/llegada", {
+      ...props.session,
+      hosi_folio: folio,
+    });
+    okMsg.value = res.mensaje || "Llegada registrada";
+    if (res.record?.vigencia_ok === false && res.record?.vigencia_aviso) {
+      error.value = String(res.record.vigencia_aviso);
+    }
     await load();
     const updated = rows.value.find((r) => Number(r.hosi_folio) === folio);
     if (updated) selectedAgendaRow.value = updated;
@@ -1593,6 +1708,11 @@ function selectCita(row: Record<string, unknown>) {
   citaCtx.horaInicio = Number(row.cits_hrllegada || 0);
   citaCtx.horaTermino = 0;
   citaCtx.esps_espserv = Number(row.esps_espserv || 0);
+  citaCtx.unitrab_nota = props.session.unitrab;
+  citaCtx.pg_schema = "";
+  if (row.derd_fecnac) {
+    citaCtx.fecnac = String(row.derd_fecnac).slice(0, 10);
+  }
   const flag = String(row.requiere_signos || "").toUpperCase();
   if (flag === "N" || flag === "S") {
     citaCtx.requiere_signos = flag;
@@ -1612,11 +1732,15 @@ function selectCita(row: Record<string, unknown>) {
     consulta.diai_clacie1 = "";
     consulta.diai_clacie2 = "";
     consulta.diai_clacie3 = "";
+    consulta.diai_clacie4 = "";
+    consulta.diai_clacie5 = "";
     consulta.motivoCie10 = "";
     consulta.motivoConsulta = "";
     consulta.diagnosticoTexto = "";
     consulta.diagnosticoTexto2 = "";
     consulta.diagnosticoTexto3 = "";
+    consulta.diagnosticoTexto4 = "";
+    consulta.diagnosticoTexto5 = "";
     dxSlotsVisible.value = 1;
     procedimientosSel.value = [];
     procQ.value = "";
@@ -1645,13 +1769,22 @@ async function loadNotaGrabada() {
     consulta.diai_clacie1 = String(r.diai_clacie1 || "");
     consulta.diai_clacie2 = String(r.diai_clacie2 || "");
     consulta.diai_clacie3 = String(r.diai_clacie3 || "");
+    consulta.diai_clacie4 = String(r.diai_clacie4 || "");
+    consulta.diai_clacie5 = String(r.diai_clacie5 || "");
+    if (r.pg_schema) citaCtx.pg_schema = String(r.pg_schema);
+    if (r.unitrab != null) citaCtx.unitrab_nota = r.unitrab as string | number;
     const tipocon = String(r.conn_tipocon || "P").toUpperCase().slice(0, 1);
     consulta.conn_tipocon = tipocon || "P";
     consulta.enfermedadPrimeraVez = tipocon !== "S";
     consulta.enfermedadSub = tipocon === "S";
-    dxSlotsVisible.value = [consulta.diai_clacie1, consulta.diai_clacie2, consulta.diai_clacie3].filter(
-      Boolean,
-    ).length || 1;
+    dxSlotsVisible.value =
+      [
+        consulta.diai_clacie1,
+        consulta.diai_clacie2,
+        consulta.diai_clacie3,
+        consulta.diai_clacie4,
+        consulta.diai_clacie5,
+      ].filter(Boolean).length || 1;
   } catch {
     /* precarga sigue siendo usable */
   }
@@ -1691,6 +1824,12 @@ async function loadConsultaContext(force = false) {
     citaCtx.edad = calcEdad(String(r.derd_fecnac || ""))
       ? `${calcEdad(String(r.derd_fecnac || ""))} AÑOS`
       : citaCtx.edad;
+    if (r.derd_fecnac) citaCtx.fecnac = String(r.derd_fecnac).slice(0, 10);
+    const tipoSangre = String(r.derc_tiposangre || r.tiposangre || r.derc_sangre || "").trim();
+    const rh = String(r.derc_rh || r.rh || "").trim();
+    if (tipoSangre || rh) {
+      citaCtx.sangre = `${tipoSangre}${rh}`.trim() || "—";
+    }
     if (r.ders_empresa != null && r.ders_empresa !== "") {
       citaCtx.empresa = Number(r.ders_empresa);
     }
@@ -1700,6 +1839,21 @@ async function loadConsultaContext(force = false) {
     if (preData.sexo) citaCtx.sexo = String(preData.sexo).startsWith("MASC") ? "M" : citaCtx.sexo;
 
     await loadNotaGrabada();
+    await loadHistorialPaciente();
+    if (!notaBloqueada.value) {
+      await aplicarTipoconSugerido();
+      // Prellenado subjetivo editable (no copia nota anterior)
+      if (!consulta.sintomas.trim()) {
+        const bits = [
+          citaCtx.sexo === "M" ? "Paciente masculino" : citaCtx.sexo === "F" ? "Paciente femenino" : "",
+          citaCtx.edad ? `de ${citaCtx.edad.replace(/años/i, "").trim()} años` : "",
+          citaCtx.fecnac ? `(nac. ${citaCtx.fecnac})` : "",
+        ].filter(Boolean);
+        if (bits.length) {
+          consulta.sintomas = `${bits.join(" ")}. Motivo de consulta: `;
+        }
+      }
+    }
 
     if (!notaBloqueada.value) {
       consulta.sintomas = String(preData.sintomas || consulta.sintomas || "");
@@ -1754,11 +1908,15 @@ function limpiarConsulta() {
   consulta.diai_clacie1 = "";
   consulta.diai_clacie2 = "";
   consulta.diai_clacie3 = "";
+  consulta.diai_clacie4 = "";
+  consulta.diai_clacie5 = "";
   consulta.motivoCie10 = "";
   consulta.motivoConsulta = "";
   consulta.diagnosticoTexto = "";
   consulta.diagnosticoTexto2 = "";
   consulta.diagnosticoTexto3 = "";
+  consulta.diagnosticoTexto4 = "";
+  consulta.diagnosticoTexto5 = "";
   consulta.enfermedadPrimeraVez = true;
   consulta.enfermedadSub = false;
   consulta.conn_tipocon = "P";
@@ -1786,12 +1944,84 @@ function openExpedienteConsulta() {
     codigo: citaCtx.codigo || "00",
     empresa: Number(citaCtx.empresa ?? 0),
     hosi_folio: citaCtx.hosi_folio || undefined,
+    unitrab: citaCtx.unitrab_nota || props.session.unitrab,
+    pg_schema: citaCtx.pg_schema || undefined,
   });
+}
+
+async function loadHistorialPaciente() {
+  if (!citaCtx.ficha) {
+    historialNotas.value = [];
+    return;
+  }
+  try {
+    const data = await post<{ rows: Record<string, unknown>[] }>("/sub/atmed/notas/historial", {
+      ...props.session,
+      ficha: citaCtx.ficha,
+      codigo: citaCtx.codigo || "00",
+      empresa: citaCtx.empresa || 0,
+      limit: 30,
+    });
+    historialNotas.value = data.rows || [];
+  } catch {
+    historialNotas.value = [];
+  }
+}
+
+async function abrirNotaHistorial(row: Record<string, unknown>) {
+  const folio = Number(row.hosi_folio || 0);
+  const unitrabNota = row.unitrab ?? props.session.unitrab;
+  if (!folio) return;
+  try {
+    const res = await post<{ record: Record<string, unknown>; mensaje?: string }>("/sub/atmed/notas/abrir", {
+      ...props.session,
+      hosi_folio: folio,
+      unitrab_nota: unitrabNota,
+    });
+    const r = res.record || {};
+    if (r.schema_ok === false || (!r.pg_schema && r.grabada)) {
+      /* opened ok */
+    }
+    emit("openExpediente", {
+      ficha: String(r.derc_ficha || citaCtx.ficha),
+      codigo: String(r.derc_codigo || citaCtx.codigo || "00"),
+      empresa: Number(r.emp_clave ?? citaCtx.empresa ?? 0),
+      hosi_folio: folio,
+      unitrab: Number(r.unitrab ?? unitrabNota),
+      pg_schema: String(r.pg_schema || row.pg_schema || ""),
+    });
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "No se pudo abrir la nota";
+  }
+}
+
+async function grabarAdendum() {
+  if (!consulta.hosi_folio || !adendumTexto.value.trim()) return;
+  loading.value = true;
+  try {
+    const res = await post<{ record?: { plan?: string } }>("/sub/atmed/consulta/adendum", {
+      ...props.session,
+      hosi_folio: consulta.hosi_folio,
+      texto: adendumTexto.value.trim(),
+    });
+    if (res.record?.plan) consulta.plan = String(res.record.plan);
+    adendumOpen.value = false;
+    adendumTexto.value = "";
+    okMsg.value = "Adendum registrado";
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Error en adendum";
+  } finally {
+    loading.value = false;
+  }
 }
 
 function openRecetaConsulta() {
   if (!consulta.hosi_folio || !citaCtx.ficha) {
     error.value = "Seleccione una cita con paciente para emitir receta";
+    return;
+  }
+  if (!notaBloqueada.value) {
+    error.value = "Debe grabar la nota clínica antes de emitir receta.";
     return;
   }
   emit("openReceta", {
@@ -1884,6 +2114,8 @@ async function grabarConsultaConfirmada() {
       diai_clacie1: consulta.diai_clacie1,
       diai_clacie2: consulta.diai_clacie2,
       diai_clacie3: consulta.diai_clacie3,
+      diai_clacie4: consulta.diai_clacie4,
+      diai_clacie5: consulta.diai_clacie5,
       conn_tipocon: consulta.conn_tipocon,
       conn_tipoatn: "C",
       diabetes: notaCronica.diabetes === "positivo",
@@ -2140,13 +2372,43 @@ onMounted(async () => {
                 :loading="loading"
                 @click="load"
               />
+              <USelect
+                v-model="agendaFiltroEsp"
+                :items="[
+                  { label: 'Todas las especialidades', value: null },
+                  ...especialidades.map((e) => ({ label: e.espc_descrip, value: e.esps_espserv })),
+                ]"
+                placeholder="Especialidad"
+                size="sm"
+                class="min-w-44"
+              />
+              <USelect
+                v-model="agendaFiltroMed"
+                :items="[
+                  { label: 'Todos los médicos', value: '' },
+                  ...medicos.map((m) => ({
+                    label: m.medc_nombre || m.medc_ficha,
+                    value: m.medc_ficha,
+                  })),
+                ]"
+                placeholder="Médico"
+                size="sm"
+                class="min-w-40"
+              />
+              <USelect
+                v-model="agendaFiltroEstatus"
+                :items="agendaFiltroEstatusItems"
+                placeholder="Estatus"
+                size="sm"
+                class="min-w-36"
+              />
               <UButton
                 label="Imprimir agenda"
                 icon="i-lucide-printer"
                 color="neutral"
                 variant="soft"
                 size="sm"
-                :disabled="!rows.length"
+                :disabled="!rowsFiltradas.length"
                 @click="imprimirAgenda"
               />
             </div>
@@ -2169,14 +2431,14 @@ onMounted(async () => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="loading && !rows.length">
+                <tr v-if="loading && !rowsFiltradas.length">
                   <td colspan="10" class="siah-agenda-empty">Cargando…</td>
                 </tr>
-                <tr v-else-if="!rows.length">
+                <tr v-else-if="!rowsFiltradas.length">
                   <td colspan="10" class="siah-agenda-empty">Sin citas para esta fecha</td>
                 </tr>
                 <tr
-                  v-for="(row, idx) in rows"
+                  v-for="(row, idx) in rowsFiltradas"
                   v-else
                   :key="String(row.hosi_folio)"
                   :class="agendaRowClasses(row)"
@@ -2394,10 +2656,16 @@ onMounted(async () => {
                 <select
                   v-model="asignar.medicoKey"
                   class="siah-input siah-input--grow"
+                  :disabled="medicoSesionLocked && medicosAsignables.length <= 1"
+                  :title="
+                    medicoSesionLocked
+                      ? 'Médico de sesión: no puede agendar con otro médico'
+                      : undefined
+                  "
                   @change="onMedicoChange"
                 >
                   <option
-                    v-for="m in medicos"
+                    v-for="m in medicosAsignables"
                     :key="medicoOptionKey(m)"
                     :value="medicoOptionKey(m)"
                   >
@@ -2421,7 +2689,11 @@ onMounted(async () => {
                   type="text"
                   readonly
                   :value="especialidadNombre || 'Se asigna según el médico'"
-                  title="La especialidad corresponde al médico seleccionado"
+                  :title="
+                    medicoSesionLocked
+                      ? 'Especialidad del médico autenticado (no editable)'
+                      : 'La especialidad corresponde al médico seleccionado'
+                  "
                 />
               </div>
               <div class="siah-field-row">
@@ -2492,7 +2764,7 @@ onMounted(async () => {
                   @click="limpiarAsignar"
                 />
                 <UButton
-                  label="Confirmar cita"
+                  label="Grabar cita"
                   color="primary"
                   size="sm"
                   :loading="asignando"
@@ -2638,6 +2910,7 @@ onMounted(async () => {
                       <th class="px-2 py-1 text-left font-bold whitespace-nowrap">EMP</th>
                       <th class="px-2 py-1 text-left font-bold whitespace-nowrap">NOMBRE</th>
                       <th class="px-2 py-1 text-left font-bold whitespace-nowrap">PROCEDENCIA</th>
+                      <th class="px-2 py-1 text-left font-bold whitespace-nowrap">FEC. NAC.</th>
                       <th class="px-2 py-1 text-left font-bold whitespace-nowrap">EDAD</th>
                       <th class="px-2 py-1 text-left font-bold whitespace-nowrap">SEXO</th>
                       <th class="px-2 py-1 text-left font-bold whitespace-nowrap">SANGRE</th>
@@ -2659,6 +2932,7 @@ onMounted(async () => {
                       >
                         {{ citaCtx.procedencia || "—" }}
                       </td>
+                      <td class="px-2 py-1">{{ citaCtx.fecnac || "—" }}</td>
                       <td class="px-2 py-1">{{ citaCtx.edad || "—" }}</td>
                       <td class="px-2 py-1">{{ citaCtx.sexo || "—" }}</td>
                       <td class="px-2 py-1">{{ citaCtx.sangre || "—" }}</td>
@@ -2973,23 +3247,26 @@ onMounted(async () => {
                   <span class="text-xs font-bold text-muted pb-2">ENFERMEDAD</span>
                   <UCheckbox
                     :model-value="consulta.enfermedadPrimeraVez"
-                    label="1a VEZ"
+                    label="1ª vez"
                     :disabled="notaBloqueada"
                     @update:model-value="(v) => v && setTipoConsulta(true)"
                   />
                   <UCheckbox
                     :model-value="consulta.enfermedadSub"
-                    label="SUB."
+                    label="Subsecuente"
                     :disabled="notaBloqueada"
                     @update:model-value="(v) => v && setTipoConsulta(false)"
                   />
+                  <span v-if="tipoconMotivo" class="text-[0.65rem] text-muted pb-2 max-w-xs">
+                    {{ tipoconMotivo }}
+                  </span>
                   <UButton
                     icon="i-lucide-plus"
                     color="primary"
                     variant="soft"
                     size="sm"
-                    title="Agregar diagnóstico (máx. 3)"
-                    :disabled="notaBloqueada || dxSlotsVisible >= 3"
+                    title="Agregar diagnóstico (máx. 5)"
+                    :disabled="notaBloqueada || dxSlotsVisible >= 5"
                     @click="agregarDiagnostico"
                   />
                 </div>
@@ -3025,6 +3302,44 @@ onMounted(async () => {
                   <UFormField label="Diagnóstico 3" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
                     <UInput
                       v-model="consulta.diagnosticoTexto3"
+                      size="sm"
+                      class="w-full min-w-0"
+                      :disabled="notaBloqueada"
+                    />
+                  </UFormField>
+                </div>
+                <div v-if="dxSlotsVisible >= 4" class="flex flex-wrap items-end gap-3">
+                  <UFormField label="CIE-10 (4)" class="w-24">
+                    <UInput
+                      v-model="consulta.diai_clacie4"
+                      maxlength="5"
+                      size="sm"
+                      class="uppercase"
+                      :disabled="notaBloqueada"
+                    />
+                  </UFormField>
+                  <UFormField label="Diagnóstico 4" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
+                    <UInput
+                      v-model="consulta.diagnosticoTexto4"
+                      size="sm"
+                      class="w-full min-w-0"
+                      :disabled="notaBloqueada"
+                    />
+                  </UFormField>
+                </div>
+                <div v-if="dxSlotsVisible >= 5" class="flex flex-wrap items-end gap-3">
+                  <UFormField label="CIE-10 (5)" class="w-24">
+                    <UInput
+                      v-model="consulta.diai_clacie5"
+                      maxlength="5"
+                      size="sm"
+                      class="uppercase"
+                      :disabled="notaBloqueada"
+                    />
+                  </UFormField>
+                  <UFormField label="Diagnóstico 5" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
+                    <UInput
+                      v-model="consulta.diagnosticoTexto5"
                       size="sm"
                       class="w-full min-w-0"
                       :disabled="notaBloqueada"
@@ -3077,7 +3392,8 @@ onMounted(async () => {
                   variant="soft"
                   size="sm"
                   icon="i-lucide-pill"
-                  :disabled="!consulta.hosi_folio"
+                  :disabled="!consulta.hosi_folio || !notaBloqueada"
+                  title="Disponible solo después de grabar la nota"
                   @click="openRecetaConsulta"
                 />
                 <UButton
@@ -3086,8 +3402,8 @@ onMounted(async () => {
                   variant="soft"
                   size="sm"
                   icon="i-lucide-flask-conical"
-                  :disabled="!consulta.hosi_folio"
-                  title="Solo consulta; el alta es por forma 11-5"
+                  :disabled="!consulta.hosi_folio || !notaBloqueada"
+                  title="Disponible solo después de grabar la nota"
                   @click="openServiciosModal"
                 />
                 <UButton
@@ -3100,6 +3416,15 @@ onMounted(async () => {
                   @click="openExpedienteConsulta"
                 />
                 <UButton
+                  v-if="notaBloqueada"
+                  label="ADENDUM"
+                  color="warning"
+                  variant="soft"
+                  size="sm"
+                  icon="i-lucide-file-plus"
+                  @click="adendumOpen = true"
+                />
+                <UButton
                   label="Plan Nutricional"
                   color="success"
                   variant="soft"
@@ -3108,6 +3433,31 @@ onMounted(async () => {
                   title="Próximamente"
                 />
               </div>
+            </AtmedSectionCard>
+
+            <AtmedSectionCard v-if="historialNotas.length" title="Historial de notas (smeddf.hos_conssubr)">
+              <ul class="m-0 list-none space-y-1 p-0 text-xs">
+                <li
+                  v-for="h in historialNotas"
+                  :key="`${h.hosi_folio}-${h.unitrab}`"
+                  class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-default px-2 py-1"
+                >
+                  <span>
+                    Folio {{ h.hosi_folio }} · UM {{ h.unitrab }}
+                    <span v-if="h.hospital"> · {{ h.hospital }}</span>
+                    · {{ h.cond_fechcon || "—" }}
+                    <span v-if="!h.schema_ok" class="text-error font-semibold"> · sin schema en registry</span>
+                  </span>
+                  <UButton
+                    label="Abrir"
+                    size="xs"
+                    color="primary"
+                    variant="soft"
+                    :disabled="!h.schema_ok"
+                    @click="abrirNotaHistorial(h)"
+                  />
+                </li>
+              </ul>
             </AtmedSectionCard>
 
             <UAlert
@@ -3147,12 +3497,32 @@ onMounted(async () => {
           <h3 class="text-sm font-bold uppercase text-highlighted m-0">Confirmar alta a censo</h3>
           <p class="text-sm text-muted m-0">
             El paciente no estaba registrado en:
-            <strong>{{ censoConfirmPendientes.join(", ") }}</strong>.
-            ¿Desea darlo de alta al grabar la nota? Se guardará médico y fecha-hora de clasificación.
+            <strong>{{ censoConfirmPendientes.join(", ") }}</strong>. ¿Alta al censo al grabar?
           </p>
           <div class="flex justify-end gap-2">
             <UButton label="Cancelar" color="neutral" variant="outline" size="sm" @click="censoConfirmOpen = false" />
             <UButton label="Confirmar y grabar" color="primary" size="sm" :loading="loading" @click="grabarConsultaConfirmada" />
+          </div>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="adendumOpen" :ui="{ content: 'max-w-lg w-full' }">
+      <template #content>
+        <div class="space-y-3 p-4">
+          <h3 class="text-sm font-bold uppercase text-highlighted m-0">Adendum a la nota</h3>
+          <p class="text-xs text-muted m-0">Se anexa al Plan con fecha/usuario. No modifica el SOAP original.</p>
+          <UTextarea v-model="adendumTexto" :rows="5" autoresize class="w-full" placeholder="Texto del adendum…" />
+          <div class="flex justify-end gap-2">
+            <UButton label="Cancelar" color="neutral" variant="outline" size="sm" @click="adendumOpen = false" />
+            <UButton
+              label="Grabar adendum"
+              color="primary"
+              size="sm"
+              :loading="loading"
+              :disabled="adendumTexto.trim().length < 5"
+              @click="grabarAdendum"
+            />
           </div>
         </div>
       </template>
