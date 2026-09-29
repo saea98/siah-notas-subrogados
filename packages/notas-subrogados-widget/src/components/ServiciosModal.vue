@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-
-type SessionAuth = { usuario: string; password: string; unitrab: string };
+import type { SessionAuth } from "../types";
 
 type Categoria = "LAB" | "BACT" | "IMG" | "INTERC";
 type EstatusSol = "ELABORADA" | "REALIZADO" | "CANCELADA";

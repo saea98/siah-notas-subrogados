@@ -5,6 +5,7 @@ import CatalogAutocomplete from "./components/CatalogAutocomplete.vue";
 import SignosVitalesModal from "./components/SignosVitalesModal.vue";
 import ServiciosModal from "./components/ServiciosModal.vue";
 import "./style.css";
+import type { SessionAuth } from "./types";
 
 /** UTextarea root es inline-flex por defecto; forzar ancho completo en notas. */
 const notaTextareaUi = { root: "relative flex w-full items-start" };
@@ -16,7 +17,7 @@ const props = withDefaults(
     apiBase: string;
     /** Prefijo opcional de rutas (proxy Laravel) */
     apiPrefix?: string;
-    session: { usuario: string; password: string; unitrab: string; rol?: string };
+    session: SessionAuth;
     /**
      * Menú AGENDA/ASIGNA/CONSULTA del widget.
      * En portal Subrogados (embebido) poner false: el host controla el chrome.
@@ -47,6 +48,8 @@ const emit = defineEmits<{
       hosi_folio?: number;
       paciente?: string;
       diagnostico?: string;
+      unitrab?: number | string;
+      pg_schema?: string;
     },
   ];
 }>();
@@ -1973,8 +1976,11 @@ async function abrirNotaHistorial(row: Record<string, unknown>) {
   const unitrabNota = row.unitrab ?? props.session.unitrab;
   if (!folio) return;
   try {
+    const schemaNota = String(row.pg_schema || "").trim();
     const res = await post<{ record: Record<string, unknown>; mensaje?: string }>("/sub/atmed/notas/abrir", {
       ...props.session,
+      unitrab: unitrabNota,
+      ...(schemaNota ? { pg_schema: schemaNota } : {}),
       hosi_folio: folio,
       unitrab_nota: unitrabNota,
     });
@@ -2031,6 +2037,8 @@ function openRecetaConsulta() {
     hosi_folio: citaCtx.hosi_folio || undefined,
     paciente: citaCtx.paciente || "",
     diagnostico: [consulta.diai_clacie1, consulta.diagnosticoTexto].filter(Boolean).join(" ").trim(),
+    unitrab: citaCtx.unitrab_nota || props.session.unitrab,
+    pg_schema: citaCtx.pg_schema || props.session.pg_schema || undefined,
   });
 }
 

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-
-type SessionAuth = { usuario: string; password: string; unitrab: string };
+import type { SessionAuth } from "../types";
 type Hit = { clave: string; descripcion: string; [k: string]: unknown };
 
 const props = withDefaults(

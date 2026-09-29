@@ -2,6 +2,9 @@ export type SessionAuth = {
   usuario: string;
   password: string;
   unitrab: string | number;
+  rol?: string;
+  /** Schema Postgres del hospital (siah, siah_picacho, …). */
+  pg_schema?: string | null;
 };
 
 export type AtmedClientConfig = {
