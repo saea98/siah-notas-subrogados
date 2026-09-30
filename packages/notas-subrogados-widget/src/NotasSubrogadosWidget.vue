@@ -3443,7 +3443,7 @@ onMounted(async () => {
               </div>
             </AtmedSectionCard>
 
-            <AtmedSectionCard v-if="historialNotas.length" title="Historial de notas (smeddf.hos_conssubr)">
+            <AtmedSectionCard v-if="historialNotas.length" title="Historial de notas">
               <ul class="m-0 list-none space-y-1 p-0 text-xs">
                 <li
                   v-for="h in historialNotas"
