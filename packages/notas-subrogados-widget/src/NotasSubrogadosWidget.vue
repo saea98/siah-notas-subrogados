@@ -75,7 +75,9 @@ const showAsideRail = computed(() => showChromeNav.value || tab.value === "agend
 const sidebarTabActive = computed(() => tab.value);
 
 const especialidades = ref<{ esps_espserv: number; espc_descrip: string; requiere_signos: string }[]>([]);
-const medicos = ref<{ medc_ficha: string; medc_codigo: string; medc_nombre: string; esps_espserv: number }[]>([]);
+const medicos = ref<
+  { medc_ficha: string; medc_codigo: string; medc_nombre: string; esps_espserv: number; espc_descrip: string }[]
+>([]);
 const horas = ref<{ hora: number; label: string }[]>([]);
 const empresasCat = ref<{ emp_clave: number; emp_descrip: string }[]>([]);
 const beneficiariosFicha = ref<
@@ -179,9 +181,9 @@ const consulta = reactive({
   diagnosticoTexto3: "",
   diagnosticoTexto4: "",
   diagnosticoTexto5: "",
-  enfermedadPrimeraVez: true,
+  enfermedadPrimeraVez: false,
   enfermedadSub: false,
-  conn_tipocon: "P",
+  conn_tipocon: "",
 });
 
 const notaBloqueada = ref(false);
@@ -191,7 +193,7 @@ const adendumOpen = ref(false);
 const adendumTexto = ref("");
 const historialNotas = ref<Record<string, unknown>[]>([]);
 const agendaFiltroEsp = ref<number | null>(null);
-const agendaFiltroMed = ref("");
+const agendaFiltroMed = ref<string | null>(null);
 const agendaFiltroEstatus = ref<number | null>(null);
 const antecedentesVisitados = ref(false);
 const alergiasLista = ref<string[]>([]);
@@ -577,7 +579,8 @@ function formatSignosResumenLinea(s: {
   ].join(" ");
 }
 
-const SIGNOS_PLAN_RE = /SIGNOS VITALES:[^\n]*/i;
+// Solo el bloque generado (hasta SATURACION O2). El plan escrito antes o después sí cuenta.
+const SIGNOS_PLAN_RE = /SIGNOS VITALES:\s*PULSO:[\s\S]*?SATURACION O2:\s*\S+\s*%/i;
 
 function syncSignosEnPlan(resumen: string) {
   const block = resumen.trim();
@@ -695,11 +698,15 @@ const citaDuplicadaMsg = computed(() => {
   return parts.join(" · ");
 });
 
-const especialidadNombre = computed(
-  () =>
-    especialidades.value.find((e) => e.esps_espserv === Number(asignar.esps_espserv))?.espc_descrip ||
-    "",
-);
+const especialidadNombre = computed(() => {
+  const fromCat = especialidades.value.find((e) => e.esps_espserv === Number(asignar.esps_espserv))?.espc_descrip;
+  if (fromCat) return fromCat;
+  const fromMed = medicos.value.find(
+    (m) =>
+      m.medc_ficha === asignar.medc_ficha && Number(m.esps_espserv) === Number(asignar.esps_espserv),
+  );
+  return fromMed?.espc_descrip || "";
+});
 
 const medicoNombre = computed(() => {
   const hit = medicos.value.find(
@@ -762,6 +769,18 @@ function medicoOptionKey(m: {
   return `${m.medc_ficha}|${m.medc_codigo || "00"}|${m.esps_espserv}`;
 }
 
+function medicoOptionLabel(m: {
+  medc_nombre: string;
+  esps_espserv: number;
+  espc_descrip?: string;
+}): string {
+  const esp =
+    m.espc_descrip ||
+    especialidades.value.find((e) => e.esps_espserv === m.esps_espserv)?.espc_descrip ||
+    "";
+  return esp ? `${m.medc_nombre} — ${esp}` : m.medc_nombre;
+}
+
 function applyMedicoKey(key: string) {
   const [f, c, e] = String(key || "").split("|");
   if (!f) return;
@@ -798,12 +817,11 @@ function puedeIniciarAtencion(row: Record<string, unknown> | null | undefined): 
 
 /** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
 const SOAP_MIN_CHARS = 20;
-const SOAP_SIGNOS_PLAN_RE = /SIGNOS VITALES:[^\n]*/i;
 
 function soapLen(text: string, stripSignos = false): number {
-  let t = (text || "").trim();
-  if (stripSignos) t = t.replace(SOAP_SIGNOS_PLAN_RE, "").trim();
-  return t.length;
+  let t = text || "";
+  if (stripSignos) t = t.replace(SIGNOS_PLAN_RE, "");
+  return t.trim().length;
 }
 
 const soapLens = computed(() => ({
@@ -826,6 +844,29 @@ const soapFaltantes = computed(() => {
 });
 
 const soapCompleto = computed(() => soapFaltantes.value.length === 0);
+
+const diagnosticoCapturado = computed(
+  () => Boolean(consulta.diai_clacie1.trim()) && Boolean(consulta.diagnosticoTexto.trim()),
+);
+const diagnosticoCalificado = computed(
+  () => consulta.enfermedadPrimeraVez || consulta.enfermedadSub,
+);
+const puedeGrabarNota = computed(
+  () =>
+    soapCompleto.value &&
+    diagnosticoCapturado.value &&
+    diagnosticoCalificado.value &&
+    !consultaBloqueadaSinSignos.value &&
+    !notaBloqueada.value,
+);
+
+watch(diagnosticoCapturado, (ok) => {
+  if (ok || notaBloqueada.value) return;
+  consulta.enfermedadPrimeraVez = false;
+  consulta.enfermedadSub = false;
+  consulta.conn_tipocon = "";
+  tipoconMotivo.value = "";
+});
 
 function soapHint(n: number): string {
   if (n >= SOAP_MIN_CHARS) return `${n} caracteres`;
@@ -1460,9 +1501,12 @@ async function loadAgendaAsignar() {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const base = props.apiBase.replace(/\/+$/, "");
   const url = `${base}${prefix.value}${path.startsWith("/") ? path : `/${path}`}`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = String(props.session?.bearer || "").trim();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
@@ -1564,6 +1608,7 @@ async function loadCatalogos() {
       medc_codigo: String(r.medc_codigo || "00"),
       medc_nombre: String(r.medc_nombre || ""),
       esps_espserv: Number(r.esps_espserv),
+      espc_descrip: String(r.espc_descrip || ""),
     }));
     citaEstatusCat.value = (est.rows || []).map((r) => ({
       cits_estatus: Number(r.cits_estatus),
@@ -1744,6 +1789,10 @@ function selectCita(row: Record<string, unknown>) {
     consulta.diagnosticoTexto3 = "";
     consulta.diagnosticoTexto4 = "";
     consulta.diagnosticoTexto5 = "";
+    consulta.enfermedadPrimeraVez = false;
+    consulta.enfermedadSub = false;
+    consulta.conn_tipocon = "";
+    tipoconMotivo.value = "";
     dxSlotsVisible.value = 1;
     procedimientosSel.value = [];
     procQ.value = "";
@@ -1776,9 +1825,9 @@ async function loadNotaGrabada() {
     consulta.diai_clacie5 = String(r.diai_clacie5 || "");
     if (r.pg_schema) citaCtx.pg_schema = String(r.pg_schema);
     if (r.unitrab != null) citaCtx.unitrab_nota = r.unitrab as string | number;
-    const tipocon = String(r.conn_tipocon || "P").toUpperCase().slice(0, 1);
-    consulta.conn_tipocon = tipocon || "P";
-    consulta.enfermedadPrimeraVez = tipocon !== "S";
+    const tipocon = String(r.conn_tipocon || "").toUpperCase().slice(0, 1);
+    consulta.conn_tipocon = tipocon === "P" || tipocon === "S" ? tipocon : "";
+    consulta.enfermedadPrimeraVez = tipocon === "P";
     consulta.enfermedadSub = tipocon === "S";
     dxSlotsVisible.value =
       [
@@ -1920,9 +1969,10 @@ function limpiarConsulta() {
   consulta.diagnosticoTexto3 = "";
   consulta.diagnosticoTexto4 = "";
   consulta.diagnosticoTexto5 = "";
-  consulta.enfermedadPrimeraVez = true;
+  consulta.enfermedadPrimeraVez = false;
   consulta.enfermedadSub = false;
-  consulta.conn_tipocon = "P";
+  consulta.conn_tipocon = "";
+  tipoconMotivo.value = "";
   dxSlotsVisible.value = 1;
   consultaLoadedFolio.value = 0;
   notaCronica.diabetes = "negativo";
@@ -2093,6 +2143,14 @@ async function doConsulta() {
     error.value =
       `SOAP incompleto: cada campo requiere al menos ${SOAP_MIN_CHARS} caracteres ` +
       `(Plan sin contar el bloque automático de signos). Faltan: ${soapFaltantes.value.join(", ")}`;
+    return;
+  }
+  if (!diagnosticoCapturado.value) {
+    error.value = "Capture el diagnóstico de consulta (CIE-10 y descripción) antes de grabar la nota.";
+    return;
+  }
+  if (!diagnosticoCalificado.value) {
+    error.value = "Califique el diagnóstico: 1ª vez o subsecuente.";
     return;
   }
   syncAlergiasDetalleFromLista();
@@ -2393,11 +2451,13 @@ onMounted(async () => {
               <USelect
                 v-model="agendaFiltroMed"
                 :items="[
-                  { label: 'Todos los médicos', value: '' },
-                  ...medicos.map((m) => ({
-                    label: m.medc_nombre || m.medc_ficha,
-                    value: m.medc_ficha,
-                  })),
+                  { label: 'Todos los médicos', value: null },
+                  ...medicos
+                    .filter((m) => String(m.medc_ficha || '').trim())
+                    .map((m) => ({
+                      label: m.medc_nombre || m.medc_ficha,
+                      value: m.medc_ficha,
+                    })),
                 ]"
                 placeholder="Médico"
                 size="sm"
@@ -2677,16 +2737,7 @@ onMounted(async () => {
                     :key="medicoOptionKey(m)"
                     :value="medicoOptionKey(m)"
                   >
-                    {{
-                      m.medc_nombre +
-                      " (" +
-                      m.medc_ficha +
-                      ")" +
-                      (especialidades.find((e) => e.esps_espserv === m.esps_espserv)
-                        ? " — " +
-                          especialidades.find((e) => e.esps_espserv === m.esps_espserv)?.espc_descrip
-                        : "")
-                    }}
+                    {{ medicoOptionLabel(m) }}
                   </option>
                 </select>
               </div>
@@ -2904,9 +2955,9 @@ onMounted(async () => {
           />
 
           <template v-else>
-            <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_92px] gap-2">
-              <div class="overflow-x-auto rounded-lg border border-default">
-                <table class="w-full text-[0.65rem] border-collapse">
+            <div class="grid min-w-0 grid-cols-1 md:grid-cols-[minmax(0,1fr)_92px] gap-2">
+              <div class="siah-consulta-ficha rounded-lg border border-default">
+                <table class="text-[0.65rem] border-collapse">
                   <thead>
                     <tr class="bg-inverted text-inverted">
                       <th class="px-2 py-1 text-left font-bold whitespace-nowrap">CITA</th>
@@ -3207,7 +3258,7 @@ onMounted(async () => {
                   class="w-full min-w-0"
                   :ui="notaFieldUi"
                   :hint="soapHint(soapLens.plan)"
-                  :error="soapLens.plan < SOAP_MIN_CHARS ? `Mínimo ${SOAP_MIN_CHARS} caracteres (sin signos auto)` : undefined"
+                  :error="soapLens.plan < SOAP_MIN_CHARS ? `Mínimo ${SOAP_MIN_CHARS} caracteres. El bloque SIGNOS VITALES no cuenta; escriba el plan antes o después.` : undefined"
                 >
                   <UTextarea
                     v-model="consulta.plan"
@@ -3256,13 +3307,13 @@ onMounted(async () => {
                   <UCheckbox
                     :model-value="consulta.enfermedadPrimeraVez"
                     label="1ª vez"
-                    :disabled="notaBloqueada"
+                    :disabled="notaBloqueada || !diagnosticoCapturado"
                     @update:model-value="(v) => v && setTipoConsulta(true)"
                   />
                   <UCheckbox
                     :model-value="consulta.enfermedadSub"
                     label="Subsecuente"
-                    :disabled="notaBloqueada"
+                    :disabled="notaBloqueada || !diagnosticoCapturado"
                     @update:model-value="(v) => v && setTipoConsulta(false)"
                   />
                   <span v-if="tipoconMotivo" class="text-[0.65rem] text-muted pb-2 max-w-xs">
@@ -3276,6 +3327,24 @@ onMounted(async () => {
                     title="Agregar diagnóstico (máx. 5)"
                     :disabled="notaBloqueada || dxSlotsVisible >= 5"
                     @click="agregarDiagnostico"
+                  />
+                  <UButton
+                    class="ml-auto"
+                    :label="notaBloqueada ? 'NOTA GRABADA' : 'GRABAR NOTA'"
+                    color="primary"
+                    size="sm"
+                    :loading="loading"
+                    :disabled="!puedeGrabarNota"
+                    :title="
+                      notaBloqueada
+                        ? 'La nota ya fue grabada'
+                        : !diagnosticoCapturado
+                          ? 'Capture el diagnóstico de consulta'
+                          : !diagnosticoCalificado
+                            ? 'Califique el diagnóstico: 1ª vez o subsecuente'
+                            : undefined
+                    "
+                    @click="doConsulta"
                   />
                 </div>
                 <div v-if="dxSlotsVisible >= 2" class="flex flex-wrap items-end gap-3">
@@ -3484,14 +3553,6 @@ onMounted(async () => {
                 size="sm"
                 :disabled="notaBloqueada"
                 @click="limpiarConsulta"
-              />
-              <UButton
-                :label="notaBloqueada ? 'NOTA GRABADA' : 'GRABAR NOTA'"
-                color="primary"
-                size="sm"
-                :loading="loading"
-                :disabled="consultaBloqueadaSinSignos || !soapCompleto || notaBloqueada"
-                @click="doConsulta"
               />
             </div>
           </template>

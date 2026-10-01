@@ -43,11 +43,23 @@ export function createAtmedClient(config: AtmedClientConfig): AtmedClient {
   const fetchFn = config.fetchFn || fetch;
   const prefix = config.prefix || "";
 
+  function jsonHeaders(body: unknown): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (body && typeof body === "object" && "bearer" in body) {
+      const token = String((body as { bearer?: string | null }).bearer || "").trim();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+  }
+
   async function postJson<T = unknown>(path: string, body: unknown): Promise<T> {
     const url = joinUrl(config.apiBase, prefix, path);
     const res = await fetchFn(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: jsonHeaders(body),
       body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));

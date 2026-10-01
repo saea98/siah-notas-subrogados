@@ -3,6 +3,24 @@
   min-width: 0;
 }
 
+/* Ficha de consulta: las columnas no se encogen; el recuadro se desplaza en horizontal. */
+.siah-atmed-widget .siah-consulta-ficha {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.siah-atmed-widget .siah-consulta-ficha table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.siah-atmed-widget .siah-consulta-ficha th,
+.siah-atmed-widget .siah-consulta-ficha td {
+  white-space: nowrap;
+}
+
 /* Campos de nota clínica: ancho completo dentro de UCard / UFormField */
 .siah-atmed-widget .siah-nota-fields {
   width: 100%;

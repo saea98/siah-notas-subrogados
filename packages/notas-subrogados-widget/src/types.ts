@@ -1,6 +1,8 @@
 export type SessionAuth = {
   usuario: string;
-  password: string;
+  password?: string;
+  /** Access token de Keycloak. El API lo valida. */
+  bearer?: string | null;
   unitrab: string | number;
   rol?: string;
   /** Schema Postgres del hospital (siah, siah_picacho, …). */
