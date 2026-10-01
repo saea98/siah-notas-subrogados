@@ -998,8 +998,38 @@ const citaCtx = reactive({
   pg_schema: "" as string,
 });
 
+/** Especialidades que el médico de sesión puede ver o elegir. */
+const especialidadesMedico = computed(() => {
+  if (!medicoSesionLocked.value) return especialidades.value;
+  const propias = new Set(
+    medicosAsignables.value
+      .map((m) => Number(m.esps_espserv))
+      .filter((n) => Number.isFinite(n) && n > 0),
+  );
+  if (!propias.size) return especialidades.value;
+  return especialidades.value.filter((e) => propias.has(Number(e.esps_espserv)));
+});
+
+const agendaFiltroEspItems = computed(() => {
+  const propias = especialidadesMedico.value.map((e) => ({
+    label: e.espc_descrip,
+    value: e.esps_espserv as number | null,
+  }));
+  if (medicoSesionLocked.value) {
+    if (propias.length > 1) {
+      return [{ label: "Mis especialidades", value: null as number | null }, ...propias];
+    }
+    return propias;
+  }
+  return [{ label: "Todas las especialidades", value: null as number | null }, ...propias];
+});
+
 const rowsFiltradas = computed(() => {
+  const permitidas = medicoSesionLocked.value
+    ? new Set(especialidadesMedico.value.map((e) => Number(e.esps_espserv)))
+    : null;
   return rows.value.filter((r) => {
+    if (permitidas && permitidas.size && !permitidas.has(Number(r.esps_espserv))) return false;
     if (agendaFiltroEsp.value != null && Number(r.esps_espserv) !== agendaFiltroEsp.value) return false;
     if (agendaFiltroMed.value && String(r.medc_ficha || "") !== agendaFiltroMed.value) return false;
     if (agendaFiltroEstatus.value != null && Number(r.cits_estatus) !== agendaFiltroEstatus.value) return false;
@@ -2440,13 +2470,16 @@ onMounted(async () => {
               />
               <USelect
                 v-model="agendaFiltroEsp"
-                :items="[
-                  { label: 'Todas las especialidades', value: null },
-                  ...especialidades.map((e) => ({ label: e.espc_descrip, value: e.esps_espserv })),
-                ]"
+                :items="agendaFiltroEspItems"
                 placeholder="Especialidad"
                 size="sm"
                 class="min-w-44"
+                :disabled="medicoSesionLocked && agendaFiltroEspItems.length <= 1"
+                :title="
+                  medicoSesionLocked
+                    ? 'Solo las especialidades asignadas a su usuario'
+                    : undefined
+                "
               />
               <USelect
                 v-model="agendaFiltroMed"
