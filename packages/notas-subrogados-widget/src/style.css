@@ -1,27 +1,714 @@
-/* Tokens y layout compartidos del widget AtMed (el host aporta Tailwind / @nuxt/ui). */
+/* Tokens clínicos alineados a .siah/prototipos/Widgets/Notas */
 .siah-atmed-widget {
+  --siah-green: #006b44;
+  --siah-ink: #172344;
+  --siah-muted: #718099;
+  --siah-line: #dfe6ef;
+  --siah-bg: #f6f8fb;
+  --siah-card: #ffffff;
+  --siah-input-border: #d3ddea;
+  min-width: 0;
+  color: var(--siah-ink);
+  font: 14px/1.5 Arial, Helvetica, sans-serif;
+  background: var(--siah-bg);
+  border-radius: 10px;
+}
+
+.siah-atmed-widget *,
+.siah-atmed-widget *::before,
+.siah-atmed-widget *::after {
+  box-sizing: border-box;
+}
+
+.siah-atmed-widget .siah-clinical-shell {
+  background: transparent;
+  border: 0 !important;
+  border-radius: 0;
+  padding: 0.25rem 0.15rem !important;
+  gap: 1.1rem !important;
+}
+
+.siah-atmed-widget .siah-crumb {
+  color: var(--siah-muted);
+  font-size: 12px;
+  margin: 0 0 0.65rem;
+}
+
+.siah-atmed-widget .siah-page-title {
+  margin: 0;
+  color: var(--siah-green);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  line-height: 1.2;
+}
+
+.siah-atmed-widget .siah-page-sub {
+  margin: 0.45rem 0 0;
+  color: var(--siah-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.siah-atmed-widget .siah-clinical-card {
+  background: var(--siah-card);
+  border: 1px solid var(--siah-line);
+  border-radius: 7px;
+  padding: 1.1rem;
+}
+
+.siah-atmed-widget .siah-clinical-card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.siah-atmed-widget .siah-side-card h3,
+.siah-atmed-widget .siah-section-h2 {
+  margin: 0;
+  color: var(--siah-green);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.siah-atmed-widget .siah-side-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.siah-atmed-widget .siah-side-actions .siah-proto-btn {
+  width: 100%;
+}
+
+.siah-atmed-widget .siah-proto-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  border: 1px solid var(--siah-line);
+  border-radius: 6px;
+  background: white;
+  color: var(--siah-ink);
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 600;
+  text-align: center;
+}
+
+.siah-atmed-widget .siah-proto-btn:hover:not(:disabled) {
+  background: #edf5f1;
+}
+
+.siah-atmed-widget .siah-proto-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.siah-atmed-widget .siah-proto-btn--primary {
+  background: var(--siah-green);
+  color: #fff;
+  border-color: var(--siah-green);
+}
+
+.siah-atmed-widget .siah-proto-btn--primary:hover:not(:disabled) {
+  background: #005536;
+}
+
+.siah-atmed-widget .siah-proto-btn--active {
+  background: var(--siah-green);
+  color: #fff;
+  border-color: var(--siah-green);
+  box-shadow: inset 0 0 0 1px #005536;
+}
+
+.siah-atmed-widget .siah-radio-line .siah-proto-btn {
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
+.siah-atmed-widget .siah-proto-btn--soft-warn {
+  color: #aa6600;
+  background: #fff8eb;
+  border-color: #f0d7a8;
+}
+
+.siah-atmed-widget .siah-proto-btn--soft-ok {
+  color: #0a6b0a;
+  background: #e8f7e8;
+  border-color: #b9dfb9;
+}
+
+.siah-atmed-widget .siah-field {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--siah-ink);
   min-width: 0;
 }
 
-/* Ficha de consulta: las columnas no se encogen; el recuadro se desplaza en horizontal. */
+.siah-atmed-widget .siah-field > .siah-native,
+.siah-atmed-widget .siah-field > input,
+.siah-atmed-widget .siah-field > select,
+.siah-atmed-widget .siah-field > textarea {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+  padding: 10px;
+  border: 1px solid var(--siah-input-border);
+  border-radius: 5px;
+  background: white;
+  color: var(--siah-ink);
+  font: inherit;
+  min-width: 0;
+}
+
+.siah-atmed-widget .siah-field > .siah-native:focus,
+.siah-atmed-widget .siah-field > input:focus,
+.siah-atmed-widget .siah-field > select:focus,
+.siah-atmed-widget .siah-field > textarea:focus {
+  outline: 2px solid #a9cfbd;
+}
+
+.siah-atmed-widget .siah-search-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr auto;
+  gap: 15px;
+  align-items: end;
+}
+
+.siah-atmed-widget .siah-appointment-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr;
+  gap: 16px;
+}
+
+.siah-atmed-widget .siah-appointment-grid .siah-wide {
+  grid-column: 1 / -1;
+}
+
+.siah-atmed-widget .siah-summary-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1.1fr 1.3fr 1fr 0.6fr 1.1fr;
+  gap: 17px;
+}
+
+.siah-atmed-widget .siah-summary-grid small {
+  display: block;
+  color: var(--siah-muted);
+  font-size: 11px;
+  margin-bottom: 7px;
+}
+
+.siah-atmed-widget .siah-summary-grid strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 17px;
+  border-top: 1px solid var(--siah-line);
+}
+
+.siah-atmed-widget .siah-fields-counter {
+  text-align: right;
+  color: var(--siah-muted);
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+.siah-atmed-widget .siah-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.siah-atmed-widget .siah-kpi {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 1rem 1.1rem;
+  min-width: 0;
+}
+
+.siah-atmed-widget .siah-kpi__icon {
+  height: 43px;
+  width: 43px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: #edf6f1;
+  color: var(--siah-green);
+  flex-shrink: 0;
+}
+
+.siah-atmed-widget .siah-kpi__value {
+  display: block;
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--siah-ink);
+  margin-top: 2px;
+}
+
+.siah-atmed-widget .siah-kpi__label {
+  display: block;
+  font-size: 12px;
+  color: var(--siah-muted);
+}
+
+.siah-atmed-widget .siah-kpi--espera .siah-kpi__icon {
+  background: #e8f7e8;
+  color: #0a6b0a;
+}
+
+.siah-atmed-widget .siah-kpi--espera .siah-kpi__value {
+  color: #0a6b0a;
+}
+
+.siah-atmed-widget .siah-kpi--atendido .siah-kpi__icon {
+  background: #e3eefb;
+  color: #0a3d91;
+}
+
+.siah-atmed-widget .siah-kpi--atendido .siah-kpi__value {
+  color: #0a3d91;
+}
+
+.siah-atmed-widget .siah-badge {
+  display: inline-block;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  padding: 5px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.siah-atmed-widget .siah-badge--pending {
+  background: #ffe5e5;
+  color: #b30000;
+  border-color: #b3000022;
+}
+
+.siah-atmed-widget .siah-badge--wait {
+  background: #e8f7e8;
+  color: #0a6b0a;
+  border-color: #0a6b0a22;
+}
+
+.siah-atmed-widget .siah-badge--done {
+  background: #e3eefb;
+  color: #0a3d91;
+  border-color: #0a3d9122;
+}
+
+.siah-atmed-widget .siah-badge--deferred {
+  background: #f0e0e8;
+  color: #813552;
+  border-color: #81355222;
+}
+
+.siah-atmed-widget .siah-badge--local {
+  background: #d7f4ff;
+  color: #0a5570;
+  border-color: #0a557022;
+}
+
+.siah-atmed-widget .siah-badge--foreign {
+  background: #ffe2c6;
+  color: #915613;
+  border-color: #91561322;
+}
+
+.siah-atmed-widget .siah-badge--admin {
+  background: #f5d7ff;
+  color: #782a91;
+  border-color: #782a9122;
+}
+
+.siah-atmed-widget .siah-badge--absent {
+  background: #ececec;
+  color: #565656;
+  border-color: #56565622;
+}
+
+.siah-atmed-widget .siah-badge--all {
+  background: #fff3bf;
+  color: #b07100;
+  border-color: #b0710022;
+}
+
+.siah-atmed-widget .siah-patient-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.siah-atmed-widget .siah-table-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 14px 18px;
+  border-top: 1px solid var(--siah-line);
+  background: #fafcfd;
+  font-size: 12px;
+  color: var(--siah-muted);
+}
+
+.siah-atmed-widget .siah-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0.35rem 0 0.85rem;
+}
+
+.siah-atmed-widget .siah-step {
+  background: var(--siah-card);
+  border: 1px solid var(--siah-line);
+  border-radius: 7px;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--siah-muted);
+}
+
+.siah-atmed-widget .siah-step b {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #edf2f6;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.siah-atmed-widget .siah-step--active {
+  border-color: #b1d3c2;
+  color: var(--siah-green);
+}
+
+.siah-atmed-widget .siah-step--active b {
+  background: var(--siah-green);
+  color: #fff;
+}
+
+.siah-atmed-widget .siah-number {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  background: #e7f2eb;
+  color: var(--siah-green);
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.siah-atmed-widget .siah-note-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.siah-atmed-widget .siah-note-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.siah-atmed-widget .siah-consulta-meta small {
+  display: block;
+  color: var(--siah-muted);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.siah-atmed-widget .siah-consulta-meta strong {
+  display: block;
+  font-size: 12px;
+  color: var(--siah-ink);
+  margin-bottom: 10px;
+}
+
+.siah-atmed-widget .siah-save-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  background: white;
+  border: 1px solid var(--siah-line);
+  border-radius: 7px;
+  padding: 16px 20px;
+  margin-top: 4px;
+}
+
+.siah-atmed-widget .siah-save-bar b {
+  color: var(--siah-ink);
+  font-size: 14px;
+}
+
+.siah-atmed-widget .siah-actions-top {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-vital-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.siah-atmed-widget .siah-vital-column {
+  border: 1px solid var(--siah-line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: white;
+}
+
+.siah-atmed-widget .siah-vital-head {
+  padding: 16px;
+  background: #f4f7f9;
+  border-bottom: 1px solid var(--siah-line);
+}
+
+.siah-atmed-widget .siah-vital-head strong {
+  display: block;
+  color: var(--siah-green);
+  margin-bottom: 5px;
+  font-size: 13px;
+}
+
+.siah-atmed-widget .siah-vital-content {
+  padding: 0 17px 17px;
+}
+
+.siah-atmed-widget .siah-vital-group {
+  margin-top: 18px;
+}
+
+.siah-atmed-widget .siah-group-title {
+  font-size: 11px;
+  color: var(--siah-muted);
+  text-transform: uppercase;
+  font-weight: 700;
+  border-bottom: 1px solid var(--siah-line);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.siah-atmed-widget .siah-vital-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.siah-atmed-widget .siah-last-item {
+  background: #f8fafb;
+  border: 1px solid #e8edf1;
+  border-radius: 5px;
+  padding: 10px;
+}
+
+.siah-atmed-widget .siah-last-item small {
+  display: block;
+  color: var(--siah-muted);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.siah-atmed-widget .siah-last-item b {
+  font-size: 16px;
+  color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-last-item span {
+  font-size: 11px;
+  color: var(--siah-muted);
+  margin-left: 5px;
+}
+
+.siah-atmed-widget .siah-input-unit {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--siah-input-border);
+  border-radius: 5px;
+  margin-top: 6px;
+  background: white;
+}
+
+.siah-atmed-widget .siah-input-unit input {
+  margin: 0;
+  border: 0;
+  min-width: 0;
+  flex: 1;
+  padding: 10px;
+  background: transparent;
+  color: var(--siah-ink);
+  font: inherit;
+}
+
+.siah-atmed-widget .siah-input-unit input:focus {
+  outline: none;
+}
+
+.siah-atmed-widget .siah-input-unit span {
+  color: var(--siah-muted);
+  font-size: 10px;
+  padding-right: 8px;
+  white-space: nowrap;
+}
+
+.siah-atmed-widget .siah-vital-toolbar {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-metabolic {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.siah-atmed-widget .siah-condition {
+  background: #f8fafb;
+  border: 1px solid var(--siah-line);
+  border-radius: 6px;
+  padding: 12px;
+  text-align: center;
+}
+
+.siah-atmed-widget .siah-condition label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-condition button {
+  padding: 5px 8px;
+  font-size: 10px;
+}
+
+.siah-atmed-widget .siah-soap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 17px;
+}
+
+.siah-atmed-widget .siah-soap textarea {
+  min-height: 130px;
+}
+
+.siah-atmed-widget .siah-clinical-grid {
+  display: grid;
+  grid-template-columns: 1fr 100px 2fr;
+  gap: 13px;
+  align-items: end;
+}
+
+.siah-atmed-widget .siah-patient-name-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 15px;
+  align-items: center;
+}
+
+.siah-atmed-widget .siah-patient-name-row strong {
+  font-size: 16px;
+  color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-helper {
+  font-size: 12px;
+  color: var(--siah-muted);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.siah-atmed-widget .siah-radio-line {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  margin-top: 16px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .siah-atmed-widget .siah-vital-columns,
+  .siah-atmed-widget .siah-soap,
+  .siah-atmed-widget .siah-clinical-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .siah-atmed-widget .siah-metabolic {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Ficha de consulta */
 .siah-atmed-widget .siah-consulta-ficha {
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
   overscroll-behavior-x: contain;
+  border: 1px solid var(--siah-line);
+  border-radius: 7px;
+  background: white;
 }
 
 .siah-atmed-widget .siah-consulta-ficha table {
   width: max-content;
   min-width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
 }
 
-.siah-atmed-widget .siah-consulta-ficha th,
-.siah-atmed-widget .siah-consulta-ficha td {
+.siah-atmed-widget .siah-consulta-ficha th {
+  background: #f3f5f8;
+  color: var(--siah-ink);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  padding: 12px 10px;
+  border-block: 1px solid var(--siah-line);
   white-space: nowrap;
 }
 
-/* Campos de nota clínica: ancho completo dentro de UCard / UFormField */
+.siah-atmed-widget .siah-consulta-ficha td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--siah-line);
+  white-space: nowrap;
+  color: var(--siah-ink);
+}
+
 .siah-atmed-widget .siah-nota-fields {
   width: 100%;
 }
@@ -30,40 +717,28 @@
   width: 100%;
 }
 
-/* Tablas de agenda: colores de estatus clínico (APT). */
-.siah-agenda-table tr.siah-agenda-row--confirmar td {
-  background: #ffe5e5;
-  color: #111;
-}
-
-.siah-agenda-table tr.siah-agenda-row--espera td {
-  background: #e8f7e8;
-  color: #0a6b0a;
-  font-weight: 600;
-}
-
-.siah-agenda-table tr.siah-agenda-row--atendido td {
-  background: #e3eefb;
-  color: #0a3d91;
-}
-
+/* Agenda rows */
+.siah-agenda-table tr.siah-agenda-row--confirmar td,
+.siah-agenda-table tr.siah-agenda-row--espera td,
+.siah-agenda-table tr.siah-agenda-row--atendido td,
 .siah-agenda-table tr.siah-agenda-row--diferido td {
-  background: #f0e0e8;
-  color: #6b2038;
+  background: transparent;
+  color: var(--siah-ink);
+  font-weight: 400;
 }
 
 .siah-agenda-table tr.siah-agenda-row--picked td {
-  outline: 2px solid var(--ui-primary, #0aa7d6);
-  outline-offset: -2px;
+  background: #f5f9f7 !important;
+  box-shadow: inset 3px 0 0 var(--siah-green);
 }
 
-/* Mini calendario lateral */
+/* Mini calendario */
 .siah-mini-cal {
-  margin-top: 0.35rem;
-  border: 1px solid var(--ui-border, #e5e7eb);
-  border-radius: 0.5rem;
-  overflow: hidden;
-  background: var(--ui-bg, #fff);
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
 }
 
 .siah-mini-cal-head {
@@ -71,69 +746,135 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.25rem;
-  padding: 0.35rem 0.4rem;
-  background: var(--ui-bg-muted, #f3f4f6);
-  font-size: 0.62rem;
+  padding: 0 0 0.85rem;
+  background: transparent;
+  font-size: 13px;
   font-weight: 700;
   text-transform: capitalize;
-  color: var(--ui-text-highlighted, #111);
+  color: var(--siah-ink);
 }
 
 .siah-mini-cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 1px;
-  background: var(--ui-border, #e5e7eb);
+  gap: 4px;
+  background: transparent;
+  text-align: center;
 }
 
 .siah-mini-cal-grid--head span {
-  background: var(--ui-bg-muted, #f3f4f6);
+  background: transparent;
   text-align: center;
-  font-size: 0.52rem;
-  font-weight: 700;
-  padding: 0.2rem 0;
-  color: var(--ui-text-muted, #6b7280);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 0 7px;
+  color: var(--siah-muted);
 }
 
 .siah-cal-day {
-  border: none;
-  background: var(--ui-bg, #fff);
-  font-size: 0.58rem;
-  font-weight: 600;
-  padding: 0.28rem 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 400;
+  padding: 8px 0;
   cursor: pointer;
-  color: var(--ui-text, #374151);
+  color: var(--siah-ink);
+  border-radius: 6px;
 }
 
 .siah-cal-day:hover:not(:disabled) {
-  background: var(--ui-bg-elevated, #f9fafb);
+  background: #edf5f1;
 }
 
 .siah-cal-day--empty {
-  background: var(--ui-bg-muted, #f3f4f6);
+  background: transparent;
   cursor: default;
 }
 
 .siah-cal-day--selected {
-  background: var(--ui-primary, #0aa7d6);
+  background: var(--siah-green);
   color: #fff;
+  font-weight: 700;
 }
 
 .siah-cal-day--today:not(.siah-cal-day--selected) {
-  box-shadow: inset 0 0 0 1px var(--ui-primary, #0aa7d6);
+  box-shadow: inset 0 0 0 1px var(--siah-green);
+}
+
+.siah-cal-day--dot:not(.siah-cal-day--empty)::after {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 4px;
+  background: #b28e5c;
+  margin: 3px auto -4px;
+  border-radius: 50%;
+}
+
+.siah-cal-day--selected.siah-cal-day--dot::after {
+  background: #fff;
 }
 
 .siah-cal-nav {
-  border: none;
-  background: transparent;
-  color: var(--ui-text-muted, #6b7280);
-  font-size: 0.85rem;
+  border: 1px solid var(--siah-line);
+  background: white;
+  color: var(--siah-ink);
+  font-size: 14px;
   cursor: pointer;
-  padding: 0 0.2rem;
-  border-radius: 0.25rem;
+  padding: 4px 9px;
+  border-radius: 6px;
 }
 
 .siah-cal-nav:hover {
-  color: var(--ui-primary, #0aa7d6);
-  background: var(--ui-bg-elevated, #f9fafb);
+  color: var(--siah-green);
+  background: #edf5f1;
+}
+
+.siah-atmed-widget .siah-notice {
+  background: #f0f6ff;
+  border: 1px solid #d9e7fa;
+  border-radius: 6px;
+  padding: 12px 14px;
+  color: #395b87;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.siah-atmed-widget .siah-success-banner {
+  background: #e8f7e8;
+  color: #0a6b0a;
+  border: 1px solid #b9dfb9;
+  padding: 15px;
+  border-radius: 6px;
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .siah-atmed-widget .siah-kpi-grid,
+  .siah-atmed-widget .siah-search-grid,
+  .siah-atmed-widget .siah-appointment-grid,
+  .siah-atmed-widget .siah-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .siah-atmed-widget .siah-note-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 750px) {
+  .siah-atmed-widget .siah-page-title {
+    font-size: 21px;
+  }
+
+  .siah-atmed-widget .siah-kpi-grid,
+  .siah-atmed-widget .siah-steps,
+  .siah-atmed-widget .siah-search-grid,
+  .siah-atmed-widget .siah-appointment-grid,
+  .siah-atmed-widget .siah-summary-grid,
+  .siah-atmed-widget .siah-vital-columns,
+  .siah-atmed-widget .siah-vital-grid {
+    grid-template-columns: 1fr;
+  }
 }
