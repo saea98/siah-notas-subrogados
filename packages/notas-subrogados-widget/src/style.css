@@ -729,7 +729,6 @@
 
 .siah-agenda-table tr.siah-agenda-row--picked td {
   background: #f5f9f7 !important;
-  box-shadow: inset 3px 0 0 var(--siah-green);
 }
 
 /* Mini calendario */

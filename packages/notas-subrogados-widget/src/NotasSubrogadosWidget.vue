@@ -7,7 +7,7 @@ import ServiciosModal from "./components/ServiciosModal.vue";
 import "./style.css";
 import type { SessionAuth } from "./types";
 
-/** Modal tipo SweetAlert (solo Aceptar) para feedback de acciones/validaciones. */
+/** Modal tipo SweetAlert (solo Aceptar) para confirmaciones, errores y validaciones. */
 const alertOpen = ref(false);
 const alertState = reactive({
   title: "Información",
@@ -1324,7 +1324,11 @@ function selectedAgendaFolio(row: Record<string, unknown>): boolean {
 }
 
 function agendaRowClasses(row: Record<string, unknown>): string[] {
-  return [citaStatusClass(row.cits_estatus), "siah-agenda-row", selectedAgendaFolio(row) ? "siah-agenda-row--picked" : ""];
+  return [
+    citaStatusClass(row.cits_estatus),
+    "siah-agenda-row",
+    selectedAgendaFolio(row) ? "siah-agenda-row--picked" : "",
+  ];
 }
 
 const calWeeks = computed(() => {
@@ -4245,10 +4249,6 @@ onMounted(async () => {
 
 .siah-agenda-row--espera .siah-agenda-paciente {
   color: var(--siah-ink, #172344);
-}
-
-.siah-agenda-row--picked td {
-  outline: none;
 }
 
 .siah-agenda-toolbar {
