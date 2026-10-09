@@ -130,6 +130,7 @@ const paciente = reactive({
   procedencia: "",
   vigencia: "",
   estatusVigencia: "",
+  estatusCodigo: "",
 });
 
 const photoFailed = ref(false);
@@ -192,6 +193,14 @@ const dxSlotsVisible = ref(1);
 const adendumOpen = ref(false);
 const adendumTexto = ref("");
 const historialNotas = ref<Record<string, unknown>[]>([]);
+const historialModalOpen = ref(false);
+const historialNota = ref<Record<string, unknown> | null>(null);
+const diferirOpen = ref(false);
+const diferirFecha = ref("");
+const diferirHora = ref("");
+const diferirMotivo = ref("");
+const cancelarOpen = ref(false);
+const cancelarMotivo = ref("");
 const agendaFiltroEsp = ref<number | null>(null);
 const agendaFiltroMed = ref<string | null>(null);
 const agendaFiltroEstatus = ref<number | null>(null);
@@ -205,6 +214,7 @@ const signosPanelOpen = ref(true);
 
 const notaCronica = reactive({
   diabetes: "negativo" as "negativo" | "positivo",
+  diabetesTipo: "",
   hipertension: "negativo" as "negativo" | "positivo",
   obesidad: "negativo" as "negativo" | "positivo",
   alergias: "negativo" as "negativo" | "positivo",
@@ -285,12 +295,30 @@ function agregarDiagnostico() {
   if (dxSlotsVisible.value < 5) dxSlotsVisible.value += 1;
 }
 
-function onPickProcedimiento(hit: { clave: string; descripcion: string }) {
-  if (notaBloqueada.value) return;
+async function onPickProcedimiento(hit: { clave: string; descripcion: string }) {
   if (procedimientosSel.value.some((p) => p.clave === hit.clave)) return;
-  procedimientosSel.value.push({ clave: hit.clave, descripcion: hit.descripcion });
-  procQ.value = "";
   const line = `PROCEDIMIENTO: ${hit.clave} ${hit.descripcion}`.trim();
+  procQ.value = "";
+  if (notaBloqueada.value) {
+    if (!consulta.hosi_folio) return;
+    loading.value = true;
+    error.value = "";
+    try {
+      const res = await post<{ record?: { plan?: string } }>("/sub/atmed/consulta/procedimiento", {
+        ...props.session,
+        hosi_folio: consulta.hosi_folio,
+        texto: `${hit.clave} ${hit.descripcion}`.trim(),
+      });
+      if (res.record?.plan != null) consulta.plan = String(res.record.plan);
+      procedimientosSel.value.push({ clave: hit.clave, descripcion: hit.descripcion });
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : "No se pudo anexar el procedimiento";
+    } finally {
+      loading.value = false;
+    }
+    return;
+  }
+  procedimientosSel.value.push({ clave: hit.clave, descripcion: hit.descripcion });
   const plan = (consulta.plan || "").trim();
   if (!plan.includes(hit.clave)) {
     consulta.plan = plan ? `${plan}\n${line}` : line;
@@ -382,8 +410,21 @@ function loadAlergiasListaFromTexto(txt: string) {
   syncAlergiasDetalleFromLista();
 }
 
+const censoAltaOpen = ref(false);
+const censoAltaCampo = ref<"diabetes" | "hipertension" | null>(null);
+const censoAltaPaso = ref<"confirma" | "tipo">("confirma");
+const censoAltaTipo = ref("");
+
 function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergias") {
   if (notaBloqueada.value) return;
+  if (campo === "diabetes" || campo === "hipertension") {
+    if (censoBase[campo] || notaCronica[campo] === "positivo") return;
+    censoAltaCampo.value = campo;
+    censoAltaPaso.value = "confirma";
+    censoAltaTipo.value = "";
+    censoAltaOpen.value = true;
+    return;
+  }
   antecedentesVisitados.value = true;
   notaCronica[campo] = notaCronica[campo] === "positivo" ? "negativo" : "positivo";
   if (campo === "alergias" && notaCronica.alergias === "negativo") {
@@ -399,11 +440,48 @@ function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergi
   syncCronicosEnAnalisis();
 }
 
+async function confirmarAltaCenso() {
+  const campo = censoAltaCampo.value;
+  if (!campo || !citaCtx.ficha) return;
+  if (campo === "diabetes" && censoAltaPaso.value === "confirma") {
+    censoAltaPaso.value = "tipo";
+    return;
+  }
+  if (campo === "diabetes" && !["TIPO 1", "TIPO 2", "GESTACIONAL"].includes(censoAltaTipo.value)) {
+    error.value = "Indique TIPO 1, TIPO 2 o GESTACIONAL.";
+    return;
+  }
+  loading.value = true;
+  error.value = "";
+  try {
+    const res = await post<{ mensaje?: string }>("/sub/atmed/censo/clasificar", {
+      ...props.session,
+      ficha: citaCtx.ficha,
+      codigo: citaCtx.codigo || "00",
+      empresa: citaCtx.empresa || 0,
+      condicion: campo,
+      tipo: campo === "diabetes" ? censoAltaTipo.value : undefined,
+    });
+    notaCronica[campo] = "positivo";
+    censoBase[campo] = true;
+    if (campo === "diabetes") notaCronica.diabetesTipo = censoAltaTipo.value;
+    antecedentesVisitados.value = true;
+    syncCronicosEnAnalisis();
+    censoAltaOpen.value = false;
+    okMsg.value = res.mensaje || "Paciente registrado";
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "No se pudo registrar en el censo";
+  } finally {
+    loading.value = false;
+  }
+}
+
 function syncCronicosEnAnalisis() {
   if (notaBloqueada.value) return;
   const flag = (v: string) => (v === "positivo" ? "REGISTRADA" : "NO REGISTRADA");
+  const tipoDx = notaCronica.diabetesTipo ? ` (${notaCronica.diabetesTipo})` : "";
   const lineas = [
-    `ANTECEDENTES CRONICOS: DIABETES ${flag(notaCronica.diabetes)}, ` +
+    `ANTECEDENTES CRONICOS: DIABETES ${flag(notaCronica.diabetes)}${tipoDx}, ` +
       `HIPERTENSION ${flag(notaCronica.hipertension)}, ` +
       `OBESIDAD/SOBREPESO ${flag(notaCronica.obesidad)}.`,
   ];
@@ -661,26 +739,13 @@ const agendaAsignarPageRows = computed(() => {
 const hoyIso = computed(() => new Date().toISOString().slice(0, 10));
 
 const pacienteVigenciaLabel = computed((): "VIGENTE" | "NO VIGENTE" | "SIN DATO" => {
-  const raw = (paciente.estatusVigencia || "")
-    .toUpperCase()
-    .replace(/VIEGENTE/g, "VIGENTE");
-  if (raw.includes("NO VIGENTE") || raw.includes("VENCID")) return "NO VIGENTE";
-  if (raw.includes("VIGENTE")) return "VIGENTE";
-  const vig = (paciente.vigencia || "").slice(0, 10);
-  if (vig && vig >= hoyIso.value) return "VIGENTE";
-  if (vig && vig < hoyIso.value) return "NO VIGENTE";
-  return "SIN DATO";
+  if (!pacienteBuscado.value) return "SIN DATO";
+  return pacienteVigente.value ? "VIGENTE" : "NO VIGENTE";
 });
 
 const pacienteVigente = computed(() => {
-  const raw = (paciente.estatusVigencia || "")
-    .toUpperCase()
-    .replace(/VIEGENTE/g, "VIGENTE");
-  if (raw.includes("NO VIGENTE") || raw.includes("VENCID")) return false;
-  if (raw.includes("VIGENTE")) return true;
   const vig = (paciente.vigencia || "").slice(0, 10);
-  if (vig) return vig >= hoyIso.value;
-  return false;
+  return paciente.estatusCodigo === "00" && !!vig && vig >= hoyIso.value;
 });
 
 const citaDuplicadaDia = computed(() => citasPaciente.value.length > 0);
@@ -799,6 +864,12 @@ function citaYaLlego(row: Record<string, unknown> | null | undefined): boolean {
   return Number(row.cits_hrllegada) > 0;
 }
 
+function citaEsHoy(row: Record<string, unknown> | null | undefined): boolean {
+  if (!row) return false;
+  const citaFecha = String(row.citd_fechcita || fecha.value || "").slice(0, 10);
+  return !!citaFecha && citaFecha === hoyIso.value;
+}
+
 function citaAtendida(row: Record<string, unknown> | null | undefined): boolean {
   return Number(row?.cits_estatus) >= 4;
 }
@@ -810,9 +881,9 @@ function puedeRevertirLlegada(row: Record<string, unknown> | null | undefined): 
 }
 
 function puedeIniciarAtencion(row: Record<string, unknown> | null | undefined): boolean {
-  if (!row || citaAtendida(row)) return false;
+  if (!row || !citaEsHoy(row)) return false;
   const est = Number(row.cits_estatus);
-  return Number(row.cits_hrllegada) > 0 || est === 2 || est === 3;
+  return est === 2 || est === 3;
 }
 
 /** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
@@ -1046,13 +1117,14 @@ const medicosAsignables = computed(() => {
 const agendaFiltroEstatusItems = computed(() => [
   { label: "Todos los estatus", value: null as number | null },
   ...(citaEstatusCat.value.length
-    ? citaEstatusCat.value
-        .filter((e) => [1, 2, 3, 4].includes(e.cits_estatus))
-        .map((e) => ({ label: e.etiqueta, value: e.cits_estatus as number | null }))
+    ? citaEstatusCat.value.map((e) => ({ label: e.etiqueta, value: e.cits_estatus as number | null }))
     : [
         { label: "Por confirmar", value: 1 as number | null },
         { label: "En espera", value: 2 as number | null },
+        { label: "En consulta", value: 3 as number | null },
         { label: "Atendida", value: 4 as number | null },
+        { label: "Diferida", value: 5 as number | null },
+        { label: "Cancelada", value: 9 as number | null },
       ]),
 ]);
 
@@ -1069,14 +1141,10 @@ const signosPercentilPeds = computed(() => {
 });
 
 const llegadaDisabled = computed(() => {
-  if (!selectedAgendaRow.value) return true;
-  if (citaAtendida(selectedAgendaRow.value)) return true;
-  if (Number(selectedAgendaRow.value.cits_hrllegada) > 0) return true;
-  const citaFecha = String(
-    selectedAgendaRow.value.citd_fechcita || fecha.value || "",
-  ).slice(0, 10);
-  if (citaFecha && citaFecha > hoyIso.value) return true;
-  return false;
+  const row = selectedAgendaRow.value;
+  if (!row || !citaEsHoy(row)) return true;
+  if (Number(row.cits_hrllegada) > 0) return true;
+  return Number(row.cits_estatus) !== 1;
 });
 
 const revertirLlegadaDisabled = computed(() => {
@@ -1352,11 +1420,31 @@ function confirmarCitaSelected() {
   okMsg.value = `Cita ${row.hosi_folio} en Por confirmar (estatus inicial)`;
 }
 
-async function diferirCitaSelected() {
+function abrirDiferir() {
   const row = requireSelectedAgenda("diferir");
   if (!row) return;
-  if (citaAtendida(row)) {
-    error.value = "La cita ya está atendida; no se puede diferir";
+  if (citaAtendida(row) || [0, 9].includes(Number(row.cits_estatus))) {
+    error.value = "La cita ya está atendida, diferida o cancelada";
+    return;
+  }
+  diferirFecha.value = "";
+  diferirHora.value = "";
+  diferirMotivo.value = "";
+  diferirOpen.value = true;
+}
+
+async function confirmarDiferir() {
+  const row = selectedAgendaRow.value;
+  if (!row) return;
+  const horaTxt = diferirHora.value.trim();
+  const [hh, mm] = horaTxt.split(":");
+  const hora = Number(hh) * 100 + Number(mm || 0);
+  if (!diferirFecha.value || !Number.isFinite(hora)) {
+    error.value = "Indique la fecha y la hora de la nueva cita.";
+    return;
+  }
+  if (diferirMotivo.value.trim().length < 3) {
+    error.value = "Capture el motivo del diferimiento.";
     return;
   }
   loading.value = true;
@@ -1365,11 +1453,51 @@ async function diferirCitaSelected() {
     const res = await post<{ mensaje: string }>("/sub/atmed/diferir", {
       ...props.session,
       hosi_folio: Number(row.hosi_folio),
+      fecha: diferirFecha.value,
+      hora,
+      motivo: diferirMotivo.value.trim(),
     });
     okMsg.value = res.mensaje || `Cita ${row.hosi_folio} diferida`;
+    diferirOpen.value = false;
     await load();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error al diferir cita";
+  } finally {
+    loading.value = false;
+  }
+}
+
+function abrirCancelar() {
+  const row = requireSelectedAgenda("cancelar");
+  if (!row) return;
+  if ([0, 9].includes(Number(row.cits_estatus)) || Number(row.cits_estatus) === 4) {
+    error.value = "La cita ya está atendida o cancelada";
+    return;
+  }
+  cancelarMotivo.value = "";
+  cancelarOpen.value = true;
+}
+
+async function confirmarCancelar() {
+  const row = selectedAgendaRow.value;
+  if (!row) return;
+  if (cancelarMotivo.value.trim().length < 3) {
+    error.value = "Capture el motivo de la cancelación.";
+    return;
+  }
+  loading.value = true;
+  error.value = "";
+  try {
+    const res = await post<{ mensaje: string }>("/sub/atmed/cancelar", {
+      ...props.session,
+      hosi_folio: Number(row.hosi_folio),
+      motivo: cancelarMotivo.value.trim(),
+    });
+    okMsg.value = res.mensaje || `Cita ${row.hosi_folio} cancelada`;
+    cancelarOpen.value = false;
+    await load();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Error al cancelar la cita";
   } finally {
     loading.value = false;
   }
@@ -1380,6 +1508,26 @@ function formatFechaDisplay(iso: string): string {
   const [y, mo, d] = iso.slice(0, 10).split("-");
   if (!y || !mo || !d) return iso;
   return `${d}/${mo}/${y}`;
+}
+
+function formatFechaNota(value: unknown): string {
+  const raw = String(value || "");
+  const iso = raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, mo, d] = iso.split("-");
+    return `${d}-${mo}-${y}`;
+  }
+  return raw || "—";
+}
+
+function formatHoraNota(value: unknown): string {
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0 && n < 2400) {
+    return `${String(Math.floor(n / 100)).padStart(2, "0")}:${String(n % 100).padStart(2, "0")}`;
+  }
+  const raw = String(value || "");
+  if (raw.includes("T") || raw.includes(" ")) return raw.slice(11, 16) || "—";
+  return "—";
 }
 
 function formatCitaHoraShort(hhmm: unknown): string {
@@ -1412,6 +1560,7 @@ function clearPaciente() {
   paciente.procedencia = "";
   paciente.vigencia = "";
   paciente.estatusVigencia = "";
+  paciente.estatusCodigo = "";
   photoFailed.value = false;
 }
 
@@ -1449,6 +1598,7 @@ async function loadPaciente() {
     paciente.umaDescri = String(r.uma_desc || "");
     paciente.procedencia = String(r.ders_locfor || "");
     paciente.vigencia = String(r.derd_vigencia || "").slice(0, 10);
+    paciente.estatusCodigo = String(r.ders_estatus || "").trim();
     paciente.estatusVigencia = String(r.estatus_desc || r.ders_estatus || "").replace(
       /VIEGENTE/gi,
       "VIGENTE",
@@ -1724,6 +1874,10 @@ async function doAsignar() {
   okMsg.value = "";
   if (!pacienteBuscado.value) {
     buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
+    return;
+  }
+  if (!pacienteVigente.value) {
+    error.value = "Paciente NO VIGENTE. El estatus debe ser 00 y la vigencia mayor o igual a hoy.";
     return;
   }
   if (citaDuplicadaDia.value) {
@@ -2006,6 +2160,7 @@ function limpiarConsulta() {
   dxSlotsVisible.value = 1;
   consultaLoadedFolio.value = 0;
   notaCronica.diabetes = "negativo";
+  notaCronica.diabetesTipo = "";
   notaCronica.hipertension = "negativo";
   notaCronica.obesidad = "negativo";
   notaCronica.alergias = "negativo";
@@ -2065,17 +2220,8 @@ async function abrirNotaHistorial(row: Record<string, unknown>) {
       unitrab_nota: unitrabNota,
     });
     const r = res.record || {};
-    if (r.schema_ok === false || (!r.pg_schema && r.grabada)) {
-      /* opened ok */
-    }
-    emit("openExpediente", {
-      ficha: String(r.derc_ficha || citaCtx.ficha),
-      codigo: String(r.derc_codigo || citaCtx.codigo || "00"),
-      empresa: Number(r.emp_clave ?? citaCtx.empresa ?? 0),
-      hosi_folio: folio,
-      unitrab: Number(r.unitrab ?? unitrabNota),
-      pg_schema: String(r.pg_schema || row.pg_schema || ""),
-    });
+    historialNota.value = { ...row, ...r };
+    historialModalOpen.value = true;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "No se pudo abrir la nota";
   }
@@ -2373,7 +2519,7 @@ onMounted(async () => {
             variant="soft"
             size="xs"
             block
-            :disabled="loading"
+            :disabled="loading || !selectedAgendaRow || Number(selectedAgendaRow.cits_estatus) === 1 || puedeIniciarAtencion(selectedAgendaRow)"
             @click="confirmarCitaSelected"
           />
           <UButton
@@ -2393,7 +2539,7 @@ onMounted(async () => {
             variant="soft"
             size="xs"
             block
-            :disabled="loading || revertirLlegadaDisabled"
+            :disabled="loading || revertirLlegadaDisabled || !selectedAgendaRow || Number(selectedAgendaRow.cits_estatus) === 1 || puedeIniciarAtencion(selectedAgendaRow)"
             @click="revertirLlegadaSelected"
           />
           <UButton
@@ -2404,7 +2550,17 @@ onMounted(async () => {
             size="xs"
             block
             :disabled="loading || !selectedAgendaRow || citaAtendida(selectedAgendaRow)"
-            @click="diferirCitaSelected"
+            @click="abrirDiferir"
+          />
+          <UButton
+            label="CANCELAR CITA"
+            icon="i-lucide-calendar-x"
+            color="error"
+            variant="soft"
+            size="xs"
+            block
+            :disabled="loading || !selectedAgendaRow || [0, 4, 9].includes(Number(selectedAgendaRow.cits_estatus))"
+            @click="abrirCancelar"
           />
         </div>
 
@@ -2719,7 +2875,8 @@ onMounted(async () => {
                     <span><strong>Edad</strong> {{ paciente.edad || "—" }}</span>
                     <span><strong>Ficha</strong> {{ asignar.ficha }}-{{ asignar.codigo }}</span>
                     <span><strong>Departamento</strong> {{ paciente.depto || "—" }}</span>
-                    <span><strong>UMA</strong> {{ [paciente.uma, paciente.umaDescri].filter(Boolean).join(" · ") || "—" }}</span>
+                    <span><strong>Unidad de adscripción</strong> {{ [paciente.uma, paciente.umaDescri].filter(Boolean).join(" · ") || "—" }}</span>
+                    <span><strong>Procedencia</strong> {{ paciente.procedencia || "—" }}</span>
                   </div>
                 </div>
               </div>
@@ -2728,7 +2885,7 @@ onMounted(async () => {
                 color="warning"
                 variant="subtle"
                 class="mt-2"
-                title="El paciente no está vigente. Puede continuar con advertencia; la regla de bloqueo está pendiente."
+                title="Paciente NO VIGENTE. No se puede agendar la cita."
               />
             </AtmedSectionCard>
 
@@ -3060,7 +3217,7 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
-                  :disabled="notaBloqueada"
+                  :disabled="notaBloqueada || notaCronica.diabetes === 'positivo'"
                   @click="toggleCronico('diabetes')"
                 >
                   <span class="text-xs font-bold text-muted">DIABETES</span>
@@ -3075,7 +3232,7 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
-                  :disabled="notaBloqueada"
+                  :disabled="notaBloqueada || notaCronica.hipertension === 'positivo'"
                   @click="toggleCronico('hipertension')"
                 >
                   <span class="text-xs font-bold text-muted">HIPERTENSIÓN</span>
@@ -3461,7 +3618,7 @@ onMounted(async () => {
 
             <AtmedSectionCard title="Procedimientos médicos">
               <p class="text-[0.7rem] text-muted m-0 mb-2">
-                Catálogo CIE-9 / procedimientos de consultorio (autocomplete ≥2 caracteres). Se anexa al Plan.
+                Catálogo CIE-9. Se anexa al Plan. Con la nota ya grabada, el texto se concatena y no sustituye el plan.
               </p>
               <CatalogAutocomplete
                 v-model="procQ"
@@ -3470,7 +3627,6 @@ onMounted(async () => {
                 :session="session"
                 tipo="procedimientos"
                 placeholder="Buscar procedimiento…"
-                :disabled="notaBloqueada"
                 @select="onPickProcedimiento"
               />
               <ul v-if="procedimientosSel.length" class="mt-2 m-0 list-none space-y-1 p-0">
@@ -3553,9 +3709,11 @@ onMounted(async () => {
                   class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-default px-2 py-1"
                 >
                   <span>
-                    Folio {{ h.hosi_folio }} · UM {{ h.unitrab }}
-                    <span v-if="h.hospital"> · {{ h.hospital }}</span>
-                    · {{ h.cond_fechcon || "—" }}
+                    {{ formatFechaNota(h.cond_fechcon) }}
+                    · {{ formatHoraNota(h.conn_horaini || h.cond_fechcon) }}
+                    · {{ h.unidad_medica || h.hospital || h.unitrab || "—" }}
+                    · {{ h.especialidad || "—" }}
+                    · {{ [h.diai_clacie1, h.diagnostico].filter(Boolean).join(" ") || "—" }}
                     <span v-if="!h.schema_ok" class="text-error font-semibold"> · sin schema en registry</span>
                   </span>
                   <UButton
@@ -3593,6 +3751,105 @@ onMounted(async () => {
       </main>
     </div>
 
+    <UModal v-model:open="censoAltaOpen" :ui="{ content: 'max-w-md w-full' }">
+      <template #content>
+        <div class="space-y-3 p-4">
+          <h3 class="text-sm font-bold uppercase text-highlighted m-0">
+            {{ censoAltaCampo === "diabetes" ? "Diabetes" : "Hipertensión" }}
+          </h3>
+          <p v-if="censoAltaPaso === 'confirma'" class="text-sm m-0">
+            {{
+              censoAltaCampo === "diabetes"
+                ? "PACIENTE NO ES DIABETICO, ¿DESEA REGISTRARLO COMO PACIENTE DIABETICO?"
+                : "PACIENTE NO ES HIPERTENSO, ¿DESEA REGISTRARLO COMO PACIENTE HIPERTENSO?"
+            }}
+          </p>
+          <div v-else class="space-y-2">
+            <p class="text-sm m-0">Tipo de diabetes</p>
+            <div class="flex flex-wrap gap-2">
+              <UButton
+                v-for="tipo in ['TIPO 1', 'TIPO 2', 'GESTACIONAL']"
+                :key="tipo"
+                :label="tipo"
+                size="sm"
+                :color="censoAltaTipo === tipo ? 'primary' : 'neutral'"
+                :variant="censoAltaTipo === tipo ? 'solid' : 'outline'"
+                @click="censoAltaTipo = tipo"
+              />
+            </div>
+          </div>
+          <div class="flex justify-end gap-2">
+            <UButton label="No" color="neutral" variant="outline" size="sm" @click="censoAltaOpen = false" />
+            <UButton
+              label="Sí"
+              color="primary"
+              size="sm"
+              :loading="loading"
+              :disabled="censoAltaPaso === 'tipo' && !censoAltaTipo"
+              @click="confirmarAltaCenso"
+            />
+          </div>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="diferirOpen" :ui="{ content: 'max-w-md w-full' }">
+      <template #content>
+        <div class="space-y-3 p-4">
+          <h3 class="text-sm font-bold uppercase text-highlighted m-0">Diferir y reagendar</h3>
+          <p class="text-xs text-muted m-0">La cita actual queda diferida. Se crea otra cita en un día distinto, con los mismos datos.</p>
+          <label class="block text-xs font-semibold">Nueva fecha
+            <input v-model="diferirFecha" type="date" class="mt-1 w-full rounded-md border border-default bg-default px-2 py-1" />
+          </label>
+          <label class="block text-xs font-semibold">Nueva hora
+            <input v-model="diferirHora" type="time" class="mt-1 w-full rounded-md border border-default bg-default px-2 py-1" />
+          </label>
+          <UTextarea v-model="diferirMotivo" :rows="3" placeholder="Motivo del diferimiento" class="w-full" />
+          <div class="flex justify-end gap-2">
+            <UButton label="Cancelar" color="neutral" variant="outline" size="sm" @click="diferirOpen = false" />
+            <UButton label="Diferir" color="primary" size="sm" :loading="loading" @click="confirmarDiferir" />
+          </div>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="cancelarOpen" :ui="{ content: 'max-w-md w-full' }">
+      <template #content>
+        <div class="space-y-3 p-4">
+          <h3 class="text-sm font-bold uppercase text-highlighted m-0">Cancelar cita</h3>
+          <UTextarea v-model="cancelarMotivo" :rows="3" placeholder="Motivo de la cancelación" class="w-full" />
+          <div class="flex justify-end gap-2">
+            <UButton label="Cerrar" color="neutral" variant="outline" size="sm" @click="cancelarOpen = false" />
+            <UButton label="Cancelar cita" color="error" size="sm" :loading="loading" @click="confirmarCancelar" />
+          </div>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="historialModalOpen" :ui="{ content: 'max-w-2xl w-full' }">
+      <template #content>
+        <div class="space-y-3 p-4">
+          <h3 class="text-sm font-bold uppercase text-highlighted m-0">Nota anterior (solo lectura)</h3>
+          <p class="text-xs text-muted m-0">
+            {{ formatFechaNota(historialNota?.cond_fechcon) }}
+            · {{ historialNota?.unidad_medica || historialNota?.hospital || historialNota?.unitrab || "—" }}
+            · {{ historialNota?.especialidad || "—" }}
+            · Folio {{ historialNota?.hosi_folio }}
+          </p>
+          <div class="space-y-2 text-sm max-h-[60vh] overflow-auto">
+            <p class="m-0"><strong>Subjetivo.</strong> {{ historialNota?.sintomas || "—" }}</p>
+            <p class="m-0"><strong>Objetivo.</strong> {{ historialNota?.objetivo || "—" }}</p>
+            <p class="m-0"><strong>Análisis.</strong> {{ historialNota?.analisis || "—" }}</p>
+            <p class="m-0 whitespace-pre-wrap"><strong>Plan.</strong> {{ historialNota?.plan || "—" }}</p>
+            <p class="m-0"><strong>Diagnóstico.</strong> {{ [historialNota?.diai_clacie1, historialNota?.diagnostico].filter(Boolean).join(" ") || "—" }}</p>
+          </div>
+          <div class="flex justify-end">
+            <UButton label="Cerrar" color="neutral" variant="outline" size="sm" @click="historialModalOpen = false" />
+          </div>
+        </div>
+      </template>
+    </UModal>
+
     <UModal v-model:open="censoConfirmOpen" :ui="{ content: 'max-w-md w-full' }">
       <template #content>
         <div class="space-y-3 p-4">
@@ -3613,7 +3870,7 @@ onMounted(async () => {
       <template #content>
         <div class="space-y-3 p-4">
           <h3 class="text-sm font-bold uppercase text-highlighted m-0">Adendum a la nota</h3>
-          <p class="text-xs text-muted m-0">Se anexa al Plan con fecha/usuario. No modifica el SOAP original.</p>
+          <p class="text-xs text-muted m-0">Se anexa al Plan el mismo día de la consulta, solo por el médico que elaboró la nota. El texto no incluye la CURP.</p>
           <UTextarea v-model="adendumTexto" :rows="5" autoresize class="w-full" placeholder="Texto del adendum…" />
           <div class="flex justify-end gap-2">
             <UButton label="Cancelar" color="neutral" variant="outline" size="sm" @click="adendumOpen = false" />
