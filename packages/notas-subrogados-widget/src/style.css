@@ -877,3 +877,738 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* —— Agenda focus (prototipo_agenda_medica_citas) —— */
+.siah-atmed-widget .siah-agenda-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.siah-atmed-widget .siah-session-context {
+  font-size: 12px;
+  color: var(--siah-muted);
+  margin-top: 9px;
+}
+
+.siah-atmed-widget .siah-top-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-compact-metrics {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+  font-size: 12px;
+  color: var(--siah-muted);
+}
+
+.siah-atmed-widget .siah-compact-metrics span {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.siah-atmed-widget .siah-compact-metrics b {
+  color: var(--siah-ink);
+  font-size: 15px;
+}
+
+.siah-atmed-widget .siah-metric--wait {
+  color: #0a6b0a;
+}
+
+.siah-atmed-widget .siah-metric--pending {
+  color: #b30000;
+}
+
+.siah-atmed-widget .siah-metric--done {
+  color: #0a3d91;
+}
+
+.siah-atmed-widget .siah-agenda-extra-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.siah-atmed-widget .siah-workspace {
+  background: white;
+  border: 1px solid var(--siah-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.siah-atmed-widget .siah-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--siah-line);
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-toolbar-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--siah-green);
+  text-transform: none;
+}
+
+.siah-atmed-widget .siah-toolbar-sub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--siah-muted);
+}
+
+.siah-atmed-widget .siah-date-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-date-tools .siah-proto-btn {
+  padding: 9px 12px;
+}
+
+.siah-atmed-widget .siah-date-input {
+  margin: 0;
+  width: 152px;
+  height: 39px;
+  padding: 8px 10px;
+  border: 1px solid var(--siah-input-border);
+  border-radius: 5px;
+  background: white;
+  color: var(--siah-ink);
+  font: inherit;
+}
+
+.siah-atmed-widget .siah-list-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--siah-line);
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-tabs-focus {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-tabs-focus button {
+  padding: 9px 13px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--siah-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.siah-atmed-widget .siah-tabs-focus button[aria-selected="true"] {
+  color: var(--siah-green);
+  background: #e9f4ee;
+}
+
+.siah-atmed-widget .siah-tab-count {
+  margin-left: 6px;
+  background: #eff2f5;
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+}
+
+.siah-atmed-widget .siah-search-focus {
+  max-width: 330px;
+  width: 100%;
+  margin: 0;
+  height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--siah-input-border);
+  border-radius: 5px;
+  background: white;
+  color: var(--siah-ink);
+  font: inherit;
+}
+
+.siah-atmed-widget .siah-search-focus:focus {
+  outline: 2px solid #a9cfbd;
+}
+
+.siah-atmed-widget .siah-table-wrap {
+  overflow: auto;
+}
+
+.siah-atmed-widget .siah-focus-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  white-space: normal;
+  min-width: 1100px;
+}
+
+.siah-atmed-widget .siah-focus-table th,
+.siah-atmed-widget .siah-focus-table td {
+  padding: 14px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--siah-line);
+  color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-focus-table th {
+  background: #f3f5f8;
+  text-align: left;
+  font-weight: 700;
+  border-block: 1px solid var(--siah-line);
+}
+
+.siah-atmed-widget .siah-focus-table th:nth-child(1),
+.siah-atmed-widget .siah-focus-table td.siah-col-num {
+  width: 2.5%;
+  min-width: 36px;
+  max-width: 44px;
+  padding-left: 10px;
+  padding-right: 4px;
+  text-align: center;
+}
+
+.siah-atmed-widget .siah-focus-table th:nth-child(2) {
+  width: 8%;
+}
+
+.siah-atmed-widget .siah-focus-table th:nth-child(3),
+.siah-atmed-widget .siah-focus-table th:nth-child(4),
+.siah-atmed-widget .siah-focus-table th:nth-child(5),
+.siah-atmed-widget .siah-focus-table td.siah-col-time {
+  width: 4.5%;
+  min-width: 48px;
+  max-width: 58px;
+  padding-left: 4px;
+  padding-right: 4px;
+  white-space: nowrap;
+}
+
+.siah-atmed-widget .siah-focus-table th:nth-child(6) {
+  width: 6%;
+}
+
+.siah-atmed-widget .siah-focus-table th:nth-child(7) {
+  width: 16%;
+}
+
+.siah-atmed-widget .siah-focus-table th:nth-child(8),
+.siah-atmed-widget .siah-focus-table th:nth-child(9) {
+  width: 11%;
+}
+
+.siah-atmed-widget .siah-focus-table th:nth-child(10) {
+  width: 9%;
+}
+
+.siah-atmed-widget .siah-focus-table th:nth-child(11) {
+  width: 18%;
+}
+
+.siah-atmed-widget .siah-focus-row {
+  cursor: pointer;
+}
+
+.siah-atmed-widget .siah-focus-table tbody tr:hover {
+  background: #f8fbf9;
+}
+
+.siah-atmed-widget .siah-patient-link {
+  display: block;
+  font-weight: 700;
+  line-height: 1.5;
+  font-size: 12px;
+  color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-focus-row:hover .siah-patient-link {
+  color: var(--siah-green);
+}
+
+.siah-atmed-widget .siah-agenda-datepicker {
+  width: 152px;
+  flex-shrink: 0;
+}
+
+.siah-atmed-widget .siah-date-tools .siah-agenda-datepicker :deep(button) {
+  height: 39px;
+}
+
+.siah-atmed-widget .siah-patient-origin {
+  margin-top: 5px;
+}
+
+.siah-atmed-widget .siah-row-actions {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-row-actions .siah-proto-btn {
+  padding: 8px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.siah-atmed-widget .siah-empty-focus {
+  text-align: center !important;
+  padding: 42px !important;
+  color: var(--siah-muted);
+}
+
+.siah-atmed-widget .siah-muted {
+  color: var(--siah-muted);
+  font-size: 12px;
+}
+
+.siah-atmed-widget .siah-table-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  align-items: center;
+  padding: 15px 20px;
+  border-top: 1px solid var(--siah-line);
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--siah-muted);
+  background: #fafcfd;
+}
+
+.siah-atmed-widget .siah-legend-focus {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 14px 0;
+  font-size: 11px;
+  color: var(--siah-muted);
+}
+
+/* Drawer detalle agenda */
+.siah-atmed-widget .siah-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: #17234466;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.siah-atmed-widget .siah-drawer-panel {
+  height: 100dvh;
+  width: min(460px, 95vw);
+  background: white;
+  border-left: 1px solid var(--siah-line);
+  box-shadow: -8px 0 35px #17234418;
+  display: flex;
+  flex-direction: column;
+  color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-drawer-header {
+  padding: 22px;
+  border-bottom: 1px solid var(--siah-line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.siah-atmed-widget .siah-drawer-header h2 {
+  margin: 0;
+  font-size: 17px;
+  color: var(--siah-green);
+  text-transform: none;
+}
+
+.siah-atmed-widget .siah-drawer-content {
+  padding: 22px;
+  overflow: auto;
+  flex: 1;
+}
+
+.siah-atmed-widget .siah-drawer-patient {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.5;
+  margin: 15px 0 6px;
+}
+
+.siah-atmed-widget .siah-drawer-data {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin: 25px 0;
+}
+
+.siah-atmed-widget .siah-drawer-data small {
+  display: block;
+  color: var(--siah-muted);
+  font-size: 11px;
+  margin-bottom: 7px;
+}
+
+.siah-atmed-widget .siah-drawer-data b {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.siah-atmed-widget .siah-drawer-data .siah-wide {
+  grid-column: 1 / -1;
+}
+
+.siah-atmed-widget .siah-drawer-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 18px;
+  border-top: 1px solid var(--siah-line);
+}
+
+.siah-atmed-widget .siah-drawer-buttons .siah-proto-btn {
+  font-size: 12px;
+}
+
+/* —— Nota tabs (prototipo_registro_nota_medica_tabs) —— */
+.siah-atmed-widget .siah-note-tabs-layout .siah-page-title {
+  font-size: 22px;
+}
+
+.siah-atmed-widget .siah-patient-strip {
+  padding: 13px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 10px;
+}
+
+.siah-atmed-widget .siah-patient-ident {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.siah-atmed-widget .siah-patient-ident strong {
+  font-size: 14px;
+  display: block;
+}
+
+.siah-atmed-widget .siah-initials {
+  display: grid;
+  place-items: center;
+  background: #e8f2ec;
+  color: var(--siah-green);
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.siah-atmed-widget .siah-patient-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-patient-tools .siah-proto-btn {
+  padding: 8px 11px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.siah-atmed-widget .siah-compact-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-quick-nav,
+.siah-atmed-widget .siah-complementary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-compact-toolbar .siah-proto-btn {
+  padding: 8px 11px;
+  font-size: 12px;
+}
+
+.siah-atmed-widget .siah-action-menu {
+  position: relative;
+}
+
+.siah-atmed-widget .siah-action-menu summary {
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid var(--siah-line);
+  border-radius: 6px;
+  padding: 8px 11px;
+  background: white;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.siah-atmed-widget .siah-action-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.siah-atmed-widget .siah-menu {
+  position: absolute;
+  right: 0;
+  top: 39px;
+  background: white;
+  box-shadow: 0 10px 28px #17234422;
+  border: 1px solid var(--siah-line);
+  border-radius: 7px;
+  min-width: 215px;
+  padding: 5px;
+  z-index: 10;
+}
+
+.siah-atmed-widget .siah-menu button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 10px 12px;
+  border-radius: 5px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--siah-ink);
+  cursor: pointer;
+}
+
+.siah-atmed-widget .siah-menu button:hover:not(:disabled) {
+  background: #edf5f1;
+}
+
+.siah-atmed-widget .siah-menu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.siah-atmed-widget .siah-note-tabs-bar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--siah-line);
+  margin-bottom: 13px;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-note-tabs {
+  display: flex;
+  gap: 5px;
+  overflow: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.siah-atmed-widget .siah-note-tabs button {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 13px 16px;
+  white-space: nowrap;
+  color: var(--siah-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.siah-atmed-widget .siah-note-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--siah-green);
+  color: var(--siah-green);
+  background: #edf5f1;
+}
+
+.siah-atmed-widget .siah-note-tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+}
+
+.siah-atmed-widget .siah-note-tab-actions .siah-proto-btn {
+  padding: 8px 11px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.siah-atmed-widget .siah-note-tabs-layout .siah-vital-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.siah-atmed-widget .siah-note-tabs-layout .siah-vital-columns {
+  gap: 15px;
+}
+
+.siah-atmed-widget .siah-note-tabs-layout .siah-vital-head {
+  padding: 11px 13px;
+}
+
+.siah-atmed-widget .siah-note-tabs-layout .siah-vital-content {
+  padding: 0 13px 13px;
+}
+
+.siah-atmed-widget .siah-note-tabs-layout .siah-condition {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  padding: 10px;
+}
+
+.siah-atmed-widget .siah-note-tabs-layout .siah-condition label {
+  margin: 0;
+}
+
+.siah-atmed-widget .siah-note-tabs-layout .siah-soap textarea,
+.siah-atmed-widget .siah-note-tabs-layout .siah-soap .siah-field {
+  min-height: auto;
+}
+
+.siah-atmed-widget .siah-note-tabs-layout .siah-soap {
+  gap: 12px;
+}
+
+.siah-atmed-widget .siah-save-bar--sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin-top: 12px;
+  padding: 11px 16px;
+  box-shadow: 0 -4px 14px #17234408;
+}
+
+.siah-atmed-widget .siah-save-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.siah-atmed-widget .siah-save-actions .siah-proto-btn {
+  padding: 9px 12px;
+  font-size: 12px;
+}
+
+.siah-atmed-widget .siah-errors {
+  color: #a32d3d;
+  font-size: 12px;
+  white-space: pre-line;
+  padding: 12px;
+  background: #fff2f2;
+  border: 1px solid #efcccc;
+  border-radius: 6px;
+  margin-top: 8px;
+}
+
+.siah-atmed-widget .siah-patient-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 0;
+}
+
+.siah-atmed-widget .siah-patient-details dt {
+  font-size: 11px;
+  color: var(--siah-muted);
+}
+
+.siah-atmed-widget .siah-patient-details dd {
+  margin: 5px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 1050px) {
+  .siah-atmed-widget .siah-note-tabs-layout .siah-vital-grid,
+  .siah-atmed-widget .siah-note-tabs-layout .siah-metabolic {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .siah-atmed-widget .siah-agenda-extra-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .siah-atmed-widget .siah-list-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .siah-atmed-widget .siah-search-focus {
+    max-width: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .siah-atmed-widget .siah-patient-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .siah-atmed-widget .siah-save-bar--sticky {
+    align-items: stretch;
+  }
+
+  .siah-atmed-widget .siah-patient-details {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .siah-atmed-widget .siah-note-tabs-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .siah-atmed-widget .siah-note-tabs button {
+    padding: 11px 12px;
+    font-size: 12px;
+  }
+
+  .siah-atmed-widget .siah-note-tab-actions {
+    padding-bottom: 10px;
+  }
+
+  .siah-atmed-widget .siah-note-tabs-layout .siah-vital-columns,
+  .siah-atmed-widget .siah-note-tabs-layout .siah-vital-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -12,7 +12,8 @@
   },
   "peerDependencies": {
     "vue": "^3.5.0",
-    "@nuxt/ui": "^4.0.0"
+    "@nuxt/ui": "^4.0.0",
+    "@internationalized/date": "^3.0.0"
   },
   "files": ["src"],
   "keywords": ["siah", "subrogados", "atmed", "notas", "vue", "widget"]

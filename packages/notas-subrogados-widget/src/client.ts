@@ -1,5 +1,27 @@
 import type { AtmedClientConfig, OkRecord, OkRows, SessionAuth } from "./types";
 
+/** Campos de identidad/credencial: los inyecta el proxy Laravel, no el navegador. */
+const HOST_SESSION_KEYS = [
+  "bearer",
+  "password",
+  "usuario",
+  "pg_schema",
+  "tipo_usuario",
+  "unitrab",
+  "rol",
+] as const;
+
+function stripHostSessionFields(body: unknown): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  const out = { ...(body as Record<string, unknown>) };
+  for (const key of HOST_SESSION_KEYS) {
+    delete out[key];
+  }
+  return out;
+}
+
 function joinUrl(base: string, prefix: string, path: string) {
   const b = base.replace(/\/+$/, "");
   const pfx = prefix
@@ -43,24 +65,15 @@ export function createAtmedClient(config: AtmedClientConfig): AtmedClient {
   const fetchFn = config.fetchFn || fetch;
   const prefix = config.prefix || "";
 
-  function jsonHeaders(body: unknown): Record<string, string> {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    if (body && typeof body === "object" && "bearer" in body) {
-      const token = String((body as { bearer?: string | null }).bearer || "").trim();
-      if (token) headers.Authorization = `Bearer ${token}`;
-    }
-    return headers;
-  }
-
   async function postJson<T = unknown>(path: string, body: unknown): Promise<T> {
     const url = joinUrl(config.apiBase, prefix, path);
     const res = await fetchFn(url, {
       method: "POST",
-      headers: jsonHeaders(body),
-      body: JSON.stringify(body),
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(stripHostSessionFields(body)),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {

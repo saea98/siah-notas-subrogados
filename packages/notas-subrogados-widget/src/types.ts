@@ -1,11 +1,12 @@
 export type SessionAuth = {
   usuario: string;
   password?: string;
-  /** Access token de Keycloak. El API lo valida. */
+  /** Access token de Keycloak. Lo inyecta el proxy del host; no enviar desde el navegador. */
   bearer?: string | null;
   unitrab: string | number;
   rol?: string;
-  /** Schema Postgres del hospital (siah, siah_picacho, …). */
+  tipo_usuario?: string | null;
+  /** Schema Postgres. Lo inyecta el proxy del host. */
   pg_schema?: string | null;
 };
 

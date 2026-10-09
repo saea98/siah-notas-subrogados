@@ -64,16 +64,13 @@ async function search(term: string) {
   loading.value = true;
   error.value = "";
   try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    const token = String(props.session?.bearer || "").trim();
-    if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(joinUrl("/sub/catalogos/buscar"), {
       method: "POST",
-      headers,
-      body: JSON.stringify({ ...props.session, tipo: props.tipo, q: t, limit: 40 }),
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ tipo: props.tipo, q: t, limit: 40 }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
