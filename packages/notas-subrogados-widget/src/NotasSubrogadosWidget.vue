@@ -157,10 +157,8 @@ const okMsg = ref("");
 const rows = ref<Record<string, unknown>[]>([]);
 const fecha = ref(new Date().toISOString().slice(0, 10));
 const tab = ref<"agenda" | "asignar" | "consulta">("agenda");
-/** Rail izquierdo: menú de módulos + calendario (solo Asignar; Agenda/Nota usan layout focus/tabs). */
-const showAsideRail = computed(
-  () => showChromeNav.value || tab.value === "asignar",
-);
+/** Rail izquierdo: menú de módulos (solo cuando el widget trae chrome propio). */
+const showAsideRail = computed(() => showChromeNav.value);
 const sidebarTabActive = computed(() => tab.value);
 /** Filtro de foco de la agenda (prototipo citas). */
 const agendaFocusTab = ref<"todo" | "wait" | "done" | "all">("todo");
@@ -236,10 +234,8 @@ const paciente = reactive({
 
 const photoFailed = ref(false);
 const selectedAgendaRow = ref<Record<string, unknown> | null>(null);
-const calMonth = ref(new Date().toISOString().slice(0, 7));
 
 const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
-const DIAS_CAL = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
 const MESES = [
   "enero",
   "febrero",
@@ -928,6 +924,11 @@ const consultaTieneSignos = computed(() => {
   return folio > 0 && folio === Number(citaCtx.hosi_folio || 0);
 });
 
+/** Una vez grabados los signos de la cita (o la nota), captura y botones quedan en solo lectura. */
+const signosCapturaBloqueada = computed(
+  () => notaBloqueada.value || consultaTieneSignos.value,
+);
+
 const consultaBloqueadaSinSignos = computed(
   () =>
     Boolean(consulta.hosi_folio) &&
@@ -1089,12 +1090,6 @@ function puedeRevertirLlegada(row: Record<string, unknown> | null | undefined): 
   if (!row || citaAtendida(row)) return false;
   const est = Number(row.cits_estatus);
   return Number(row.cits_hrllegada) > 0 || est === 2 || est === 3;
-}
-
-function puedeIniciarAtencion(row: Record<string, unknown> | null | undefined): boolean {
-  if (!row || !citaEsHoy(row)) return false;
-  const est = Number(row.cits_estatus);
-  return est === 2 || est === 3;
 }
 
 /** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
@@ -1483,22 +1478,9 @@ const signosPercentilPeds = computed(() => {
   return percentilImcPediatrico(imc, edad, citaCtx.sexo || "");
 });
 
-const llegadaDisabled = computed(() => {
-  const row = selectedAgendaRow.value;
-  if (!row || !citaEsHoy(row)) return true;
-  if (Number(row.cits_hrllegada) > 0) return true;
-  return Number(row.cits_estatus) !== 1;
-});
-
 const revertirLlegadaDisabled = computed(() => {
   if (!selectedAgendaRow.value) return true;
   return !puedeRevertirLlegada(selectedAgendaRow.value);
-});
-
-const iniciarAtencionDisabled = computed(() => {
-  if (!puedeClinica.value) return true;
-  if (!selectedAgendaRow.value) return true;
-  return !puedeIniciarAtencion(selectedAgendaRow.value);
 });
 
 const prefix = computed(() => {
@@ -1597,7 +1579,6 @@ function moveAgendaDay(delta: number) {
   const d = new Date(`${fecha.value.slice(0, 10)}T12:00:00`);
   d.setDate(d.getDate() + delta);
   fecha.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  calMonth.value = fecha.value.slice(0, 7);
   agendaPage.value = 1;
   void load();
 }
@@ -1605,7 +1586,6 @@ function moveAgendaDay(delta: number) {
 function goAgendaToday() {
   const d = new Date();
   fecha.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  calMonth.value = fecha.value.slice(0, 7);
   agendaPage.value = 1;
   void load();
 }
@@ -1622,7 +1602,6 @@ function closeAgendaDrawer() {
 function onAgendaFechaChange(iso: string | null) {
   if (!iso) return;
   fecha.value = iso.slice(0, 10);
-  calMonth.value = fecha.value.slice(0, 7);
   agendaPage.value = 1;
   void load();
 }
@@ -1649,21 +1628,6 @@ function revealConsultaErrorTab() {
   if (!diagnosticoCapturado.value || !diagnosticoCalificado.value) {
     switchConsultaTab("diagnostic");
   }
-}
-
-function agendaPrimaryAction(row: Record<string, unknown>): {
-  label: string;
-  primary: boolean;
-  kind: "attend" | "arrival" | "note" | "none";
-} {
-  if (citaAtendida(row)) return { label: "Ver nota", primary: false, kind: "note" };
-  if (puedeIniciarAtencion(row)) {
-    return { label: "Iniciar atención →", primary: true, kind: "attend" };
-  }
-  if (!citaYaLlego(row)) {
-    return { label: "Registrar llegada", primary: true, kind: "arrival" };
-  }
-  return { label: "", primary: false, kind: "none" };
 }
 
 function calcEdad(fecnac: string): string {
@@ -1702,12 +1666,6 @@ function formatAgendaTitulo(iso: string): string {
   return `AGENDA DE ${dia.toUpperCase()}, ${d.getDate()} DE ${mes.toUpperCase()} DE ${d.getFullYear()}`;
 }
 
-function formatCalMonthLabel(ym: string): string {
-  const [y, m] = ym.split("-").map(Number);
-  if (!y || !m) return ym;
-  return `${MESES[m - 1] || ""} de ${y}`;
-}
-
 function selectedAgendaFolio(row: Record<string, unknown>): boolean {
   return Number(selectedAgendaRow.value?.hosi_folio) === Number(row.hosi_folio);
 }
@@ -1719,26 +1677,6 @@ function agendaRowClasses(row: Record<string, unknown>): string[] {
     selectedAgendaFolio(row) ? "siah-agenda-row--picked" : "",
   ];
 }
-
-const calWeeks = computed(() => {
-  const [y, m] = calMonth.value.split("-").map(Number);
-  if (!y || !m) return [] as (number | null)[][];
-  const first = new Date(y, m - 1, 1);
-  const daysInMonth = new Date(y, m, 0).getDate();
-  const weeks: (number | null)[][] = [];
-  let week: (number | null)[] = Array(first.getDay()).fill(null);
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    week.push(day);
-    if (week.length === 7) {
-      weeks.push(week);
-      week = [];
-    }
-  }
-  if (week.length) weeks.push([...week, ...Array(7 - week.length).fill(null)]);
-  return weeks;
-});
-
-const selectedCalDay = computed(() => Number(fecha.value.slice(8, 10)) || 0);
 
 const tiempoEsperaProm = computed(() => {
   const mins: number[] = [];
@@ -1756,30 +1694,6 @@ const tiempoEsperaProm = computed(() => {
 });
 
 const tiempoConsultaProm = computed(() => "00:00");
-
-function shiftCalMonth(delta: number) {
-  const [y, m] = calMonth.value.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  calMonth.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function pickCalendarDay(day: number | null) {
-  if (!day) return;
-  const [y, m] = calMonth.value.split("-").map(Number);
-  const iso = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  fecha.value = iso;
-  if (tab.value === "asignar" && iso >= hoyIso.value) {
-    asignar.fecha = iso;
-  }
-  void load();
-}
-
-function isCalendarDaySelected(day: number | null): boolean {
-  if (!day) return false;
-  const [y, m] = calMonth.value.split("-").map(Number);
-  const iso = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  return iso === fecha.value.slice(0, 10);
-}
 
 function selectAgendaRow(row: Record<string, unknown>) {
   selectedAgendaRow.value = row;
@@ -2076,13 +1990,6 @@ function procedenciaBadgeClass(row: Record<string, unknown>): string {
 
 function procedenciaBadgeLabel(row: Record<string, unknown>): string {
   return normalizeProcedencia(row.procedencia || row.derc_procedencia || row.ders_locfor)?.label || "";
-}
-
-function calendarDayHasCitas(day: number | null): boolean {
-  if (!day) return false;
-  const [y, m] = calMonth.value.split("-").map(Number);
-  const iso = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  return iso === fecha.value.slice(0, 10) && rows.value.length > 0;
 }
 
 function clearPaciente() {
@@ -2687,7 +2594,11 @@ async function loadConsultaContext(force = false) {
         antecedentesVisitados.value = true;
       }
       consultaLoadedFolio.value = citaCtx.hosi_folio;
+      signos.hosi_folio = Number(citaCtx.hosi_folio || consulta.hosi_folio || 0);
       await loadUltimosSignos();
+      if (consultaTieneSignos.value) {
+        copiarUltimosSignos();
+      }
       if (!notaBloqueada.value && ultimosSignos.value && !SIGNOS_PLAN_RE.test(consulta.plan || "")) {
         syncSignosEnPlan(formatSignosResumenLinea(ultimosSignos.value));
       }
@@ -2811,31 +2722,9 @@ async function abrirNotaHistorial(row: Record<string, unknown>) {
       unitrab_nota: unitrabNota,
     });
     const r = res.record || {};
-<<<<<<< HEAD
-    citaCtx.hosi_folio = folio;
-    citaCtx.ficha = String(r.derc_ficha || citaCtx.ficha || "");
-    citaCtx.codigo = String(r.derc_codigo || citaCtx.codigo || "00");
-    citaCtx.empresa = Number(r.emp_clave ?? citaCtx.empresa ?? 0);
-    citaCtx.paciente = String(r.paciente || citaCtx.paciente || "");
-    citaCtx.especialidad = String(r.especialidad || citaCtx.especialidad || "");
-    citaCtx.medico = String(r.medico || citaCtx.medico || "");
-    citaCtx.esps_espserv = Number(r.esps_espserv || citaCtx.esps_espserv || 0);
-    citaCtx.unitrab_nota = (r.unitrab as string | number) ?? unitrabNota;
-    consulta.hosi_folio = folio;
-    consultaLoadedFolio.value = 0;
-    notaBloqueada.value = false;
-    consultaOkLocal.value = false;
-    tab.value = "consulta";
-    await loadConsultaContext(true);
-    if (notaBloqueada.value) {
-      emit("consultaGuardada", { hosi_folio: folio, saved: true });
-    }
-    notifySuccess(`Nota del folio ${folio} abierta en consulta.`);
-=======
-    // main: historial en solo lectura (modal); no reabre en consulta editable
+    // historial en solo lectura (modal); no reabre en consulta editable
     historialNota.value = { ...row, ...r };
     historialModalOpen.value = true;
->>>>>>> 884a7a2fece4d15f5812317c1ecd4a1851340f3a
   } catch (e) {
     error.value = e instanceof Error ? e.message : "No se pudo abrir la nota";
   } finally {
@@ -3048,6 +2937,12 @@ async function doSignos() {
     error.value = "Seleccione una cita (folio)";
     return;
   }
+  if (signosCapturaBloqueada.value) {
+    error.value = consultaTieneSignos.value
+      ? "Los signos vitales de esta consulta ya fueron grabados."
+      : "La nota ya está grabada; no se pueden modificar los signos.";
+    return;
+  }
   const required: [keyof typeof signos, string][] = [
     ["pulso", "Pulso"],
     ["respiracion", "Respiración"],
@@ -3073,6 +2968,23 @@ async function doSignos() {
     );
     okMsg.value = res.mensaje;
     await loadUltimosSignos();
+    // Si el API no devolvió hosi_folio en "últimos", fijar contexto de la toma actual
+    // para que consultaTieneSignos bloquee de inmediato la recaptura.
+    if (!consultaTieneSignos.value && Number(signos.hosi_folio) > 0) {
+      ultimosSignos.value = {
+        ...(ultimosSignos.value || {}),
+        hosi_folio: Number(signos.hosi_folio),
+        pulso: signos.pulso,
+        respiracion: signos.respiracion,
+        tension_sis: signos.tension_sis,
+        tension_dia: signos.tension_dia,
+        temperatura: signos.temperatura,
+        peso: signos.peso,
+        estatura: signos.estatura,
+        abdominal: signos.abdominal,
+        saturacion: signos.saturacion,
+      };
+    }
     const resumen = formatSignosResumenLinea(signos);
     syncSignosEnPlan(resumen);
     const ta = clasificacionTension(signos.tension_sis, signos.tension_dia);
@@ -3087,6 +2999,7 @@ async function doSignos() {
       }
       syncCronicosEnAnalisis();
     }
+    closeSignosModal();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error al grabar signos";
   } finally {
@@ -3106,14 +3019,6 @@ watch(
   () => {
     if (tab.value === "asignar" && pacienteBuscado.value) loadCitasPaciente();
   },
-);
-
-watch(
-  () => fecha.value,
-  (v) => {
-    calMonth.value = v.slice(0, 7);
-  },
-  { immediate: true },
 );
 
 watch(tab, async (t) => {
@@ -3193,44 +3098,11 @@ onMounted(async () => {
             </button>
           </div>
         </div>
-
-        <div v-if="tab === 'asignar'" class="siah-clinical-card siah-side-card">
-          <div class="siah-mini-cal">
-            <div class="siah-mini-cal-head">
-              <button type="button" class="siah-cal-nav" aria-label="Mes anterior" @click="shiftCalMonth(-1)">‹</button>
-              <span>{{ formatCalMonthLabel(calMonth) }}</span>
-              <button type="button" class="siah-cal-nav" aria-label="Mes siguiente" @click="shiftCalMonth(1)">›</button>
-            </div>
-            <div class="siah-mini-cal-grid siah-mini-cal-grid--head">
-              <span v-for="d in DIAS_CAL" :key="d">{{ d.slice(0, 1).toUpperCase() }}</span>
-            </div>
-            <div v-for="(week, wi) in calWeeks" :key="wi" class="siah-mini-cal-grid">
-              <button
-                v-for="(day, di) in week"
-                :key="`${wi}-${di}`"
-                type="button"
-                class="siah-cal-day"
-                :class="{
-                  'siah-cal-day--empty': !day,
-                  'siah-cal-day--selected': isCalendarDaySelected(day),
-                  'siah-cal-day--today': day === selectedCalDay && calMonth === fecha.slice(0, 7),
-                  'siah-cal-day--dot': calendarDayHasCitas(day),
-                }"
-                :disabled="!day"
-                @click="pickCalendarDay(day)"
-              >
-                {{ day || "" }}
-              </button>
-            </div>
-          </div>
-          <p class="side-note text-xs text-[var(--siah-muted)] mt-3 pt-3 border-t border-[var(--siah-line)] m-0">
-            Después de buscar al paciente, selecciona el día de la nueva cita.
-          </p>
-        </div>
       </aside>
 
       <main class="siah-atmed-main">
-        <div v-if="!showChromeNav" class="mb-2 flex flex-wrap gap-1.5">
+        <!-- Compact switcher solo si el host no trae Accesos (embedded = chrome del host). -->
+        <div v-if="!showChromeNav && !props.embedded" class="mb-2 flex flex-wrap gap-1.5">
           <UButton
             v-for="nav in sidebarNav"
             :key="`embed-${nav.id}`"
@@ -3424,29 +3296,25 @@ onMounted(async () => {
                     <td @click.stop>
                       <div class="siah-row-actions">
                         <button
-                          v-if="agendaPrimaryAction(row).kind === 'attend' && puedeClinica"
-                          type="button"
-                          class="siah-proto-btn siah-proto-btn--primary"
-                          @click="openConsultaFromAgenda(row)"
-                        >
-                          {{ agendaPrimaryAction(row).label }}
-                        </button>
-                        <button
-                          v-else-if="agendaPrimaryAction(row).kind === 'note' && puedeClinica"
                           type="button"
                           class="siah-proto-btn"
-                          @click="openConsultaFromAgenda(row)"
-                        >
-                          {{ agendaPrimaryAction(row).label }}
-                        </button>
-                        <button
-                          v-else-if="agendaPrimaryAction(row).kind === 'arrival'"
-                          type="button"
-                          class="siah-proto-btn siah-proto-btn--primary"
-                          :disabled="String(row.citd_fechcita || fecha).slice(0, 10) > hoyIso"
+                          :class="{ 'siah-proto-btn--primary': !citaYaLlego(row) && !citaAtendida(row) }"
+                          :disabled="citaYaLlego(row) || String(row.citd_fechcita || fecha).slice(0, 10) > hoyIso"
+                          title="Registrar llegada"
                           @click="selectAgendaRow(row); llegada(Number(row.hosi_folio))"
                         >
-                          {{ agendaPrimaryAction(row).label }}
+                          Llega
+                        </button>
+                        <button
+                          v-if="puedeClinica"
+                          type="button"
+                          class="siah-proto-btn"
+                          :class="{ 'siah-proto-btn--primary': citaYaLlego(row) && !citaAtendida(row) }"
+                          :disabled="!citaYaLlego(row)"
+                          title="Iniciar atención médica"
+                          @click="openConsultaFromAgenda(row)"
+                        >
+                          {{ citaAtendida(row) ? "Ver nota" : "Atención" }}
                         </button>
                         <button
                           type="button"
@@ -3537,25 +3405,26 @@ onMounted(async () => {
                 </div>
                 <div class="siah-drawer-buttons">
                   <button
-                    v-if="puedeClinica && (puedeIniciarAtencion(selectedAgendaRow) || citaAtendida(selectedAgendaRow))"
                     type="button"
                     class="siah-proto-btn"
-                    :class="citaAtendida(selectedAgendaRow) ? '' : 'siah-proto-btn--primary'"
-                    :disabled="!citaAtendida(selectedAgendaRow) && iniciarAtencionDisabled"
+                    :class="{ 'siah-proto-btn--primary': !citaYaLlego(selectedAgendaRow) && !citaAtendida(selectedAgendaRow) }"
+                    :disabled="loading || citaYaLlego(selectedAgendaRow) || String(selectedAgendaRow.citd_fechcita || fecha).slice(0, 10) > hoyIso"
+                    @click="llegadaSelected"
+                  >
+                    Registrar llegada
+                  </button>
+                  <button
+                    v-if="puedeClinica"
+                    type="button"
+                    class="siah-proto-btn"
+                    :class="{ 'siah-proto-btn--primary': citaYaLlego(selectedAgendaRow) && !citaAtendida(selectedAgendaRow) }"
+                    :disabled="!citaYaLlego(selectedAgendaRow)"
                     @click="openConsultaFromAgenda(selectedAgendaRow)"
                   >
                     {{ citaAtendida(selectedAgendaRow) ? "Ver nota médica" : "Iniciar atención médica" }}
                   </button>
                   <button type="button" class="siah-proto-btn" @click="openExpedienteFromAgenda(selectedAgendaRow)">
                     Ver expediente
-                  </button>
-                  <button
-                    type="button"
-                    class="siah-proto-btn"
-                    :disabled="loading || llegadaDisabled"
-                    @click="llegadaSelected"
-                  >
-                    Registrar llegada
                   </button>
                   <button
                     type="button"
@@ -4161,30 +4030,30 @@ onMounted(async () => {
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Cardiovascular</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Pulso *<div class="siah-input-unit"><input v-model="signos.pulso" inputmode="numeric" :disabled="notaBloqueada" aria-label="Pulso"><span>lpm</span></div></label>
-                        <label class="siah-field">TA sistólica *<div class="siah-input-unit"><input v-model="signos.tension_sis" inputmode="numeric" :disabled="notaBloqueada" aria-label="TA sistólica"><span>mmHg</span></div></label>
-                        <label class="siah-field">TA diastólica *<div class="siah-input-unit"><input v-model="signos.tension_dia" inputmode="numeric" :disabled="notaBloqueada" aria-label="TA diastólica"><span>mmHg</span></div></label>
+                        <label class="siah-field">Pulso *<div class="siah-input-unit"><input v-model="signos.pulso" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="Pulso"><span>lpm</span></div></label>
+                        <label class="siah-field">TA sistólica *<div class="siah-input-unit"><input v-model="signos.tension_sis" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="TA sistólica"><span>mmHg</span></div></label>
+                        <label class="siah-field">TA diastólica *<div class="siah-input-unit"><input v-model="signos.tension_dia" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="TA diastólica"><span>mmHg</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Respiratorio</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Frecuencia respiratoria *<div class="siah-input-unit"><input v-model="signos.respiracion" inputmode="numeric" :disabled="notaBloqueada" aria-label="Frecuencia respiratoria"><span>rpm</span></div></label>
-                        <label class="siah-field">Saturación de O₂<div class="siah-input-unit"><input v-model="signos.saturacion" inputmode="numeric" placeholder="50–100" :disabled="notaBloqueada" aria-label="Saturación de O₂"><span>%</span></div></label>
+                        <label class="siah-field">Frecuencia respiratoria *<div class="siah-input-unit"><input v-model="signos.respiracion" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="Frecuencia respiratoria"><span>rpm</span></div></label>
+                        <label class="siah-field">Saturación de O₂<div class="siah-input-unit"><input v-model="signos.saturacion" inputmode="numeric" placeholder="50–100" :disabled="signosCapturaBloqueada" aria-label="Saturación de O₂"><span>%</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Temperatura</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Temperatura *<div class="siah-input-unit"><input v-model="signos.temperatura" inputmode="decimal" :disabled="notaBloqueada" aria-label="Temperatura"><span>°C</span></div></label>
+                        <label class="siah-field">Temperatura *<div class="siah-input-unit"><input v-model="signos.temperatura" inputmode="decimal" :disabled="signosCapturaBloqueada" aria-label="Temperatura"><span>°C</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Antropometría</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Peso *<div class="siah-input-unit"><input v-model="signos.peso" inputmode="decimal" :disabled="notaBloqueada" aria-label="Peso"><span>kg</span></div></label>
-                        <label class="siah-field">Estatura *<div class="siah-input-unit"><input v-model="signos.estatura" inputmode="decimal" :disabled="notaBloqueada" aria-label="Estatura"><span>m</span></div></label>
-                        <label class="siah-field">Perímetro abdominal<div class="siah-input-unit"><input v-model="signos.abdominal" inputmode="numeric" :disabled="notaBloqueada" aria-label="Perímetro abdominal"><span>cm</span></div></label>
+                        <label class="siah-field">Peso *<div class="siah-input-unit"><input v-model="signos.peso" inputmode="decimal" :disabled="signosCapturaBloqueada" aria-label="Peso"><span>kg</span></div></label>
+                        <label class="siah-field">Estatura *<div class="siah-input-unit"><input v-model="signos.estatura" inputmode="decimal" :disabled="signosCapturaBloqueada" aria-label="Estatura"><span>m</span></div></label>
+                        <label class="siah-field">Perímetro abdominal<div class="siah-input-unit"><input v-model="signos.abdominal" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="Perímetro abdominal"><span>cm</span></div></label>
                       </div>
                     </div>
                     <p v-if="signosImc != null" class="siah-helper">
@@ -4192,11 +4061,14 @@ onMounted(async () => {
                       <span v-if="signosClasificacion"> · {{ signosClasificacion }}</span>
                       <span v-if="signosTensionClasificacion"> · TA {{ signosTensionClasificacion }}</span>
                     </p>
+                    <p v-if="consultaTieneSignos" class="siah-helper">
+                      Signos vitales ya grabados para esta consulta. No se pueden volver a registrar.
+                    </p>
                     <div class="siah-vital-toolbar">
                       <button
                         type="button"
                         class="siah-proto-btn"
-                        :disabled="!ultimosSignos"
+                        :disabled="!ultimosSignos || signosCapturaBloqueada"
                         :title="ultimosFechaLabel || 'Última toma del paciente'"
                         @click="copiarUltimosSignos"
                       >
@@ -4205,10 +4077,10 @@ onMounted(async () => {
                       <button
                         type="button"
                         class="siah-proto-btn siah-proto-btn--primary"
-                        :disabled="loading"
+                        :disabled="loading || signosCapturaBloqueada"
                         @click="doSignos"
                       >
-                        Grabar signos vitales
+                        {{ consultaTieneSignos ? "Signos grabados" : "Grabar signos vitales" }}
                       </button>
                     </div>
                   </div>
@@ -4884,7 +4756,6 @@ onMounted(async () => {
       <template #content>
         <div class="space-y-3 p-4">
           <h3 class="text-sm font-bold uppercase text-highlighted m-0">Adendum a la nota</h3>
-          <p class="text-xs text-muted m-0">Se anexa al Plan el mismo día de la consulta, solo por el médico que elaboró la nota. El texto no incluye la CURP.</p>
           <UTextarea v-model="adendumTexto" :rows="5" autoresize class="w-full" placeholder="Texto del adendum…" />
           <div class="flex justify-end gap-2">
             <UButton label="Cancelar" color="neutral" variant="outline" size="sm" @click="adendumOpen = false" />
@@ -4914,6 +4785,7 @@ onMounted(async () => {
       :ultimos-clasificacion="ultimosClasificacion"
       :ultimos-tension-clasificacion="ultimosTensionClasificacion"
       :ultimos-fecha-label="ultimosFechaLabel"
+      :read-only="signosCapturaBloqueada"
       @graba="doSignos"
       @copiar="copiarUltimosSignos"
       @close="closeSignosModal"

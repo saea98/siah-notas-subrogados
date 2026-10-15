@@ -25,19 +25,24 @@ type SignosRow = {
 
 const open = defineModel<boolean>("open", { required: true });
 
-defineProps<{
-  loading: boolean;
-  pacienteLine: string;
-  signos: SignosCaptura;
-  ultimosSignos: SignosRow | null;
-  signosImc: number | null;
-  signosClasificacion: string;
-  signosTensionClasificacion?: string;
-  ultimosImc: number | null;
-  ultimosClasificacion: string;
-  ultimosTensionClasificacion?: string;
-  ultimosFechaLabel: string;
-}>();
+withDefaults(
+  defineProps<{
+    loading: boolean;
+    pacienteLine: string;
+    signos: SignosCaptura;
+    ultimosSignos: SignosRow | null;
+    signosImc: number | null;
+    signosClasificacion: string;
+    signosTensionClasificacion?: string;
+    ultimosImc: number | null;
+    ultimosClasificacion: string;
+    ultimosTensionClasificacion?: string;
+    ultimosFechaLabel: string;
+    /** Signos de esta consulta ya grabados o nota bloqueada. */
+    readOnly?: boolean;
+  }>(),
+  { readOnly: false },
+);
 
 const emit = defineEmits<{
   graba: [];
@@ -76,16 +81,16 @@ const emit = defineEmits<{
 
             <div class="grid gap-2">
               <UFormField label="Pulso *" required>
-                <UInput v-model="signos.pulso" inputmode="numeric" size="sm" />
+                <UInput v-model="signos.pulso" inputmode="numeric" size="sm" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Resp x min *" required>
-                <UInput v-model="signos.respiracion" inputmode="numeric" size="sm" />
+                <UInput v-model="signos.respiracion" inputmode="numeric" size="sm" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Tensión arterial *" required>
                 <div class="flex items-center gap-2">
-                  <UInput v-model="signos.tension_sis" inputmode="numeric" size="sm" class="flex-1" />
+                  <UInput v-model="signos.tension_sis" inputmode="numeric" size="sm" class="flex-1" :disabled="readOnly" />
                   <span class="text-muted">/</span>
-                  <UInput v-model="signos.tension_dia" inputmode="numeric" size="sm" class="flex-1" />
+                  <UInput v-model="signos.tension_dia" inputmode="numeric" size="sm" class="flex-1" :disabled="readOnly" />
                 </div>
               </UFormField>
               <UFormField label="Clasificación TA">
@@ -102,13 +107,13 @@ const emit = defineEmits<{
                 />
               </UFormField>
               <UFormField label="Temp (°C) *" required>
-                <UInput v-model="signos.temperatura" inputmode="decimal" size="sm" />
+                <UInput v-model="signos.temperatura" inputmode="decimal" size="sm" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Peso (kg) *" required>
-                <UInput v-model="signos.peso" inputmode="decimal" size="sm" />
+                <UInput v-model="signos.peso" inputmode="decimal" size="sm" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Estatura (m) *" required>
-                <UInput v-model="signos.estatura" inputmode="decimal" size="sm" />
+                <UInput v-model="signos.estatura" inputmode="decimal" size="sm" :disabled="readOnly" />
               </UFormField>
               <UFormField label="I.M.C">
                 <UInput :model-value="signosImc ?? '—'" readonly size="sm" />
@@ -125,10 +130,10 @@ const emit = defineEmits<{
                 <UInput model-value="N/A" readonly size="sm" />
               </UFormField>
               <UFormField label="P. abdominal (cm)">
-                <UInput v-model="signos.abdominal" inputmode="numeric" size="sm" />
+                <UInput v-model="signos.abdominal" inputmode="numeric" size="sm" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Sat. O₂ (%)">
-                <UInput v-model="signos.saturacion" inputmode="numeric" size="sm" placeholder="50–100" />
+                <UInput v-model="signos.saturacion" inputmode="numeric" size="sm" placeholder="50–100" :disabled="readOnly" />
               </UFormField>
             </div>
           </UCard>
@@ -205,6 +210,7 @@ const emit = defineEmits<{
                 color="primary"
                 size="xs"
                 block
+                :disabled="readOnly"
                 @click="emit('copiar')"
               />
             </div>
@@ -213,10 +219,11 @@ const emit = defineEmits<{
 
         <div class="flex flex-wrap justify-center gap-2 border-t border-default px-4 py-3">
           <UButton
-            label="GRABA SIGNOS"
+            :label="readOnly ? 'SIGNOS GRABADOS' : 'GRABA SIGNOS'"
             color="primary"
             size="sm"
             :loading="loading"
+            :disabled="readOnly"
             @click="emit('graba')"
           />
           <UButton label="Salir" variant="outline" color="neutral" @click="emit('close')" />
