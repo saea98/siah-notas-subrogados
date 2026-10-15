@@ -356,6 +356,7 @@ function setTipoConsulta(primeraVez: boolean, motivo?: string) {
   consulta.enfermedadSub = !primeraVez;
   consulta.conn_tipocon = primeraVez ? "P" : "S";
   tipoconMotivo.value = motivo ?? "Marcado manualmente por el médico";
+  syncSignosEnPlan(bloquePlanAutomatico());
 }
 
 async function aplicarTipoconSugerido(cie?: string) {
@@ -680,37 +681,36 @@ async function confirmarAltaCenso() {
   }
 }
 
+function lineaAlergias(): string {
+  if (notaCronica.alergias !== "positivo") return "ALERGIAS NO REGISTRADAS";
+  const det =
+    alergiasLista.value.join(", ").trim() ||
+    (notaCronica.alergiasDetalle || "").replace(/\n+/g, ", ").trim() ||
+    "ALERGIA REFERIDA";
+  if (det.startsWith("PACIENTE REFIERE") || det.startsWith("ALERGIAS")) return det;
+  return `PACIENTE REFIERE SER ALERGICO A ${det}`;
+}
+
 function syncCronicosEnAnalisis() {
   if (notaBloqueada.value) return;
-  const flag = (v: string) => (v === "positivo" ? "REGISTRADA" : "NO REGISTRADA");
-  const tipoDx = notaCronica.diabetesTipo ? ` (${notaCronica.diabetesTipo})` : "";
-  const lineas = [
-    `ANTECEDENTES CRONICOS: DIABETES ${flag(notaCronica.diabetes)}${tipoDx}, ` +
-      `HIPERTENSION ${flag(notaCronica.hipertension)}, ` +
-      `OBESIDAD/SOBREPESO ${flag(notaCronica.obesidad)}.`,
-  ];
-  if (notaCronica.alergias === "positivo") {
-    const det =
-      alergiasLista.value.join(", ").trim() ||
-      (notaCronica.alergiasDetalle || "").replace(/\n+/g, ", ").trim() ||
-      "ALERGIA REFERIDA";
-    lineas.push(
-      det.startsWith("PACIENTE REFIERE") || det.startsWith("ALERGIAS")
-        ? det
-        : `PACIENTE REFIERE SER ALERGICO A ${det}`,
-    );
-  } else {
-    lineas.push("ALERGIAS NO REGISTRADAS");
+  const marca = (valor: string, masculino: boolean) =>
+    valor === "positivo" ? (masculino ? "REGISTRADO" : "REGISTRADA") : masculino ? "NO REGISTRADO" : "NO REGISTRADA";
+  if (/SE TRATA DE/i.test(consulta.sintomas)) {
+    consulta.sintomas = consulta.sintomas
+      .replace(/DIABETES\s+(?:NO\s+)?REGISTRADA/i, `DIABETES ${marca(notaCronica.diabetes, false)}`)
+      .replace(/HIPERTENSION\s+(?:NO\s+)?REGISTRADA/i, `HIPERTENSION ${marca(notaCronica.hipertension, false)}`)
+      .replace(
+        /OBESIDAD\/SOBREPESO\s+(?:NO\s+)?REGISTRADO/i,
+        `OBESIDAD/SOBREPESO ${marca(notaCronica.obesidad, true)}`,
+      );
   }
-  const block = lineas.join("\n");
-  const re = /ANTECEDENTES CRONICOS:[\s\S]*?(?=\n\n|$)/i;
-  const analisis = (consulta.analisis || "").trim();
-  if (re.test(analisis)) {
-    consulta.analisis = analisis.replace(re, block).trim();
-  } else if (!analisis) {
-    consulta.analisis = block;
-  } else {
-    consulta.analisis = `${block}\n\n${analisis}`.trim();
+  const linea = lineaAlergias();
+  const analisis = consulta.analisis || "";
+  if (PRECARGA_ANALISIS_RE.test(analisis)) {
+    const resto = analisis.replace(PRECARGA_ANALISIS_RE, "").trim();
+    consulta.analisis = resto ? `${linea}\n${resto}` : linea;
+  } else if (!analisis.trim()) {
+    consulta.analisis = linea;
   }
 }
 
@@ -867,18 +867,35 @@ function formatSignosResumenLinea(s: {
 // Solo el bloque generado (hasta SATURACION O2). El plan escrito antes o después sí cuenta.
 const SIGNOS_PLAN_RE = /SIGNOS VITALES:\s*PULSO:[\s\S]*?SATURACION O2:\s*\S+\s*%/i;
 
+function fraseTipoConsulta(): string {
+  if (consulta.enfermedadSub || consulta.conn_tipocon === "S") return "CONSULTA DE SEGUIMIENTO";
+  if (consulta.enfermedadPrimeraVez || consulta.conn_tipocon === "P") return "CONSULTA DE PRIMERA VEZ";
+  return "";
+}
+
+function bloquePlanAutomatico(): string {
+  const toma =
+    ultimosSignos.value && Number(ultimosSignos.value.hosi_folio || 0) === Number(citaCtx.hosi_folio || 0)
+      ? formatSignosResumenLinea(ultimosSignos.value)
+      : "";
+  return [toma, fraseTipoConsulta()].filter(Boolean).join(" ");
+}
+
 function syncSignosEnPlan(resumen: string) {
-  const block = resumen.trim();
-  if (!block) return;
+  const block = (resumen || bloquePlanAutomatico()).trim();
+  if (!block || notaBloqueada.value) return;
   const plan = (consulta.plan || "").trim();
+  const auto =
+    /SIGNOS VITALES:\s*PULSO:[\s\S]*?SATURACION O2:\s*\S+\s*%(?:\s*CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ))?/i;
   if (!plan) {
     consulta.plan = block;
     return;
   }
-  if (SIGNOS_PLAN_RE.test(plan)) {
+  if (auto.test(plan)) {
+    consulta.plan = plan.replace(auto, block).trim();
+  } else if (SIGNOS_PLAN_RE.test(plan)) {
     consulta.plan = plan.replace(SIGNOS_PLAN_RE, block).trim();
   } else {
-    // Signos al final: el médico escribe el plan clínico arriba / al inicio.
     consulta.plan = `${plan}\n${block}`.trim();
   }
 }
@@ -1095,17 +1112,28 @@ function puedeRevertirLlegada(row: Record<string, unknown> | null | undefined): 
 /** Mínimo provisional (seguimiento); alinear con backend SOAP_MIN_CHARS. */
 const SOAP_MIN_CHARS = 20;
 
-function soapLen(text: string, stripSignos = false): number {
+const PRECARGA_SINTOMAS_RE =
+  /SE TRATA DE\s+.+?OBESIDAD\/SOBREPESO\s+(?:NO\s+)?REGISTRADO\.?\s*/i;
+const PRECARGA_ANALISIS_RE =
+  /(?:PACIENTE REFIERE SER ALERGICO A[^\n]*|ALERGIAS NO REGISTRADAS)\s*/i;
+const PRECARGA_PLAN_RE = /CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ)/i;
+const MOTIVO_MARK_RE = /\[\[MC:[^\]]*\]\]/g;
+const ANTECEDENTES_RE = /ANTECEDENTES CRONICOS:[\s\S]*?(?:\n\n|$)/i;
+
+function soapLen(text: string, campo: "sintomas" | "objetivo" | "analisis" | "plan"): number {
   let t = text || "";
-  if (stripSignos) t = t.replace(SIGNOS_PLAN_RE, "");
+  t = t.replace(MOTIVO_MARK_RE, "").replace(ANTECEDENTES_RE, "");
+  if (campo === "sintomas") t = t.replace(PRECARGA_SINTOMAS_RE, "");
+  if (campo === "analisis") t = t.replace(PRECARGA_ANALISIS_RE, "");
+  if (campo === "plan") t = t.replace(SIGNOS_PLAN_RE, "").replace(PRECARGA_PLAN_RE, "");
   return t.trim().length;
 }
 
 const soapLens = computed(() => ({
-  sintomas: soapLen(consulta.sintomas),
-  objetivo: soapLen(consulta.objetivo),
-  analisis: soapLen(consulta.analisis),
-  plan: soapLen(consulta.plan, true),
+  sintomas: soapLen(consulta.sintomas, "sintomas"),
+  objetivo: soapLen(consulta.objetivo, "objetivo"),
+  analisis: soapLen(consulta.analisis, "analisis"),
+  plan: soapLen(consulta.plan, "plan"),
 }));
 
 const soapFaltantes = computed(() => {
@@ -2387,6 +2415,7 @@ function selectCita(row: Record<string, unknown>) {
   citaCtx.codigo = String(row.derc_codigo || "00");
   citaCtx.empresa = Number(row.emp_clave ?? 0);
   citaCtx.paciente = String(row.paciente || "");
+  citaCtx.procedencia = String(row.locfor || "");
   citaCtx.especialidad = String(row.especialidad || "");
   citaCtx.medico = String(row.medico || "");
   citaCtx.horaCita = Number(row.citn_hrcita || 0);
@@ -2465,6 +2494,22 @@ async function loadNotaGrabada() {
     consulta.conn_tipocon = tipocon === "P" || tipocon === "S" ? tipocon : "";
     consulta.enfermedadPrimeraVez = tipocon === "P";
     consulta.enfermedadSub = tipocon === "S";
+    consulta.motivoCie10 = String(r.motivo_cie || "");
+    consulta.motivoConsulta = String(r.motivo_texto || "");
+    consulta.diagnosticoTexto = String(r.diagnostico || "");
+    consulta.diagnosticoTexto2 = String(r.diagnostico2 || "");
+    consulta.diagnosticoTexto3 = String(r.diagnostico3 || "");
+    consulta.diagnosticoTexto4 = String(r.diagnostico4 || "");
+    consulta.diagnosticoTexto5 = String(r.diagnostico5 || "");
+    notaCronica.diabetes = r.diabetes ? "positivo" : "negativo";
+    notaCronica.hipertension = r.hipertension ? "positivo" : "negativo";
+    notaCronica.obesidad = r.obesidad ? "positivo" : "negativo";
+    procedimientosSel.value = Array.isArray(r.procedimientos)
+      ? (r.procedimientos as { clave?: string; descripcion?: string }[]).map((p) => ({
+          clave: String(p.clave || ""),
+          descripcion: String(p.descripcion || ""),
+        }))
+      : [];
     dxSlotsVisible.value =
       [
         consulta.diai_clacie1,
@@ -2517,12 +2562,11 @@ async function loadConsultaContext(force = false) {
       ]);
 
       const r = det.record || {};
-      citaCtx.paciente =
-        citaCtx.paciente ||
-        [r.derc_nombre, r.derc_appaterno, r.derc_apmaterno]
-          .map((v) => String(v || "").trim())
-          .filter(Boolean)
-          .join(" ");
+      const nombrePadron = [r.derc_nombre, r.derc_appaterno, r.derc_apmaterno]
+        .map((v) => String(v || "").trim())
+        .filter(Boolean)
+        .join(" ");
+      if (nombrePadron) citaCtx.paciente = nombrePadron;
       citaCtx.procedencia = String(r.ders_locfor || citaCtx.procedencia || "");
       citaCtx.sexo = String(r.derc_sexo || citaCtx.sexo || "");
       citaCtx.edad = calcEdad(String(r.derd_fecnac || ""))
@@ -2546,17 +2590,6 @@ async function loadConsultaContext(force = false) {
       await loadHistorialPaciente();
       if (!notaBloqueada.value) {
         await aplicarTipoconSugerido();
-        // Prellenado subjetivo editable (no copia nota anterior)
-        if (!consulta.sintomas.trim()) {
-          const bits = [
-            citaCtx.sexo === "M" ? "Paciente masculino" : citaCtx.sexo === "F" ? "Paciente femenino" : "",
-            citaCtx.edad ? `de ${citaCtx.edad.replace(/años/i, "").trim()} años` : "",
-            citaCtx.fecnac ? `(nac. ${citaCtx.fecnac})` : "",
-          ].filter(Boolean);
-          if (bits.length) {
-            consulta.sintomas = `${bits.join(" ")}. Motivo de consulta: `;
-          }
-        }
       }
 
       if (!notaBloqueada.value) {
@@ -2599,8 +2632,8 @@ async function loadConsultaContext(force = false) {
       if (consultaTieneSignos.value) {
         copiarUltimosSignos();
       }
-      if (!notaBloqueada.value && ultimosSignos.value && !SIGNOS_PLAN_RE.test(consulta.plan || "")) {
-        syncSignosEnPlan(formatSignosResumenLinea(ultimosSignos.value));
+      if (!notaBloqueada.value) {
+        syncSignosEnPlan(bloquePlanAutomatico());
       }
       await loadRecetasConsulta();
       // Host: habilitar/deshabilitar botón Solicitudes (Forma 11-5).
@@ -2695,9 +2728,9 @@ async function loadHistorialPaciente() {
       ficha: citaCtx.ficha,
       codigo: citaCtx.codigo || "00",
       empresa: citaCtx.empresa || 0,
-      limit: 30,
+      limit: 10,
     });
-    historialNotas.value = data.rows || [];
+    historialNotas.value = (data.rows || []).slice(0, 10);
   } catch {
     historialNotas.value = [];
   }
@@ -2858,8 +2891,7 @@ async function doConsulta() {
   }
   if (!soapCompleto.value) {
     error.value =
-      `SOAP incompleto: cada campo requiere al menos ${SOAP_MIN_CHARS} caracteres ` +
-      `(Plan sin contar el bloque automático de signos). Faltan: ${soapFaltantes.value.join(", ")}`;
+      `SOAP incompleto: cada campo requiere al menos ${SOAP_MIN_CHARS} caracteres además de la información precargada. Faltan: ${soapFaltantes.value.join(", ")}`;
     revealConsultaErrorTab();
     return;
   }
@@ -2907,6 +2939,9 @@ async function grabarConsultaConfirmada() {
       diabetes: notaCronica.diabetes === "positivo",
       hipertension: notaCronica.hipertension === "positivo",
       obesidad: notaCronica.obesidad === "positivo",
+      diabetes_tipo: notaCronica.diabetesTipo || undefined,
+      motivo_cie: consulta.motivoCie10,
+      motivo_texto: consulta.motivoConsulta,
       alergias: notaCronica.alergias === "positivo",
       alergias_texto:
         notaCronica.alergias === "positivo"
@@ -3278,7 +3313,9 @@ onMounted(async () => {
                     <td>{{ row.hosi_folio }}</td>
                     <td class="siah-col-time"><b>{{ formatHoraCelda(row.citn_hrcita) }}</b></td>
                     <td class="siah-col-time">{{ formatHoraCelda(row.cits_hrllegada) || "—" }}</td>
-                    <td class="siah-col-time">—</td>
+                    <td class="siah-col-time">
+                      {{ Number(row.conn_horaini) > 0 ? formatHoraCelda(row.conn_horaini) : "—" }}
+                    </td>
                     <td>{{ row.derc_ficha }}</td>
                     <td>
                       <span class="siah-patient-link">{{ row.paciente }}</span>
@@ -3286,8 +3323,8 @@ onMounted(async () => {
                         <span :class="procedenciaBadgeClass(row)">{{ procedenciaBadgeLabel(row) }}</span>
                       </div>
                     </td>
-                    <td>{{ row.especialidad || "—" }}</td>
-                    <td>—</td>
+                    <td>{{ row.motivo_consulta || "—" }}</td>
+                    <td>{{ row.diagnostico || "—" }}</td>
                     <td>
                       <span :class="citaStatusBadgeClass(row.cits_estatus)">
                         {{ citaStatusLabel(row.cits_estatus) }}
@@ -4253,7 +4290,8 @@ onMounted(async () => {
 
             <AtmedSectionCard title="Nota clínica">
               <p class="siah-helper">
-                Completa los cuatro apartados. Mínimo {{ SOAP_MIN_CHARS }} caracteres por apartado.
+                Mínimo {{ SOAP_MIN_CHARS }} caracteres propios en Síntomas, Objetivo, Análisis y Plan.
+                No cuenta la frase precargada, las alergias ni el bloque de signos.
                 <span v-if="notaBloqueada"> Solo lectura.</span>
               </p>
               <p v-if="soapBloqueadoSinSignos" class="siah-helper" style="color: #aa6600">
@@ -4272,7 +4310,7 @@ onMounted(async () => {
                     placeholder="Captura síntomas o subjetivo…"
                   />
                   <div class="siah-fields-counter">
-                    {{ soapLens.sintomas }} caracteres · mínimo {{ SOAP_MIN_CHARS }}
+                    {{ soapLens.sintomas }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }}
                   </div>
                 </label>
                 <label class="siah-field">
@@ -4287,7 +4325,7 @@ onMounted(async () => {
                     placeholder="Captura objetivo…"
                   />
                   <div class="siah-fields-counter">
-                    {{ soapLens.objetivo }} caracteres · mínimo {{ SOAP_MIN_CHARS }}
+                    {{ soapLens.objetivo }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }}
                   </div>
                 </label>
                 <label class="siah-field">
@@ -4302,7 +4340,7 @@ onMounted(async () => {
                     placeholder="Captura análisis…"
                   />
                   <div class="siah-fields-counter">
-                    {{ soapLens.analisis }} caracteres · mínimo {{ SOAP_MIN_CHARS }}
+                    {{ soapLens.analisis }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }}
                   </div>
                 </label>
                 <label class="siah-field">
@@ -4317,7 +4355,7 @@ onMounted(async () => {
                     placeholder="Captura plan…"
                   />
                   <div class="siah-fields-counter">
-                    {{ soapLens.plan }} caracteres · mínimo {{ SOAP_MIN_CHARS }}
+                    {{ soapLens.plan }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }}
                   </div>
                 </label>
               </div>
@@ -4505,7 +4543,7 @@ onMounted(async () => {
               </div>
 
               <div v-show="consultaUiTab === 'history'" class="siah-tab-panel" role="tabpanel">
-            <AtmedSectionCard title="Historial de notas">
+            <AtmedSectionCard title="Historial de notas (últimas 10)">
               <input
                 v-model="historialBusqueda"
                 class="siah-search-focus"
