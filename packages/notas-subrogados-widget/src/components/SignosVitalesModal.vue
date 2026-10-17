@@ -38,10 +38,12 @@ withDefaults(
     ultimosClasificacion: string;
     ultimosTensionClasificacion?: string;
     ultimosFechaLabel: string;
-    /** Signos de esta consulta ya grabados o nota bloqueada. */
+    /** Nota clínica ya grabada: captura en solo lectura. */
     readOnly?: boolean;
+    /** Bloquea copiar antecedente (p. ej. ya hay signos del folio actual). */
+    copyDisabled?: boolean;
   }>(),
-  { readOnly: false },
+  { readOnly: false, copyDisabled: false },
 );
 
 const emit = defineEmits<{
@@ -210,7 +212,7 @@ const emit = defineEmits<{
                 color="primary"
                 size="xs"
                 block
-                :disabled="readOnly"
+                :disabled="readOnly || copyDisabled"
                 @click="emit('copiar')"
               />
             </div>
@@ -219,7 +221,7 @@ const emit = defineEmits<{
 
         <div class="flex flex-wrap justify-center gap-2 border-t border-default px-4 py-3">
           <UButton
-            :label="readOnly ? 'SIGNOS GRABADOS' : 'GRABA SIGNOS'"
+            :label="readOnly ? 'NOTA GRABADA' : 'GRABA SIGNOS'"
             color="primary"
             size="sm"
             :loading="loading"

@@ -941,10 +941,8 @@ const consultaTieneSignos = computed(() => {
   return folio > 0 && folio === Number(citaCtx.hosi_folio || 0);
 });
 
-/** Una vez grabados los signos de la cita (o la nota), captura y botones quedan en solo lectura. */
-const signosCapturaBloqueada = computed(
-  () => notaBloqueada.value || consultaTieneSignos.value,
-);
+/** Solo la nota grabada bloquea captura; signos previos del folio se pueden actualizar. */
+const signosCapturaBloqueada = computed(() => notaBloqueada.value);
 
 const consultaBloqueadaSinSignos = computed(
   () =>
@@ -1268,9 +1266,17 @@ function closeSignosModal() {
   signosModalOpen.value = false;
 }
 
+function openServiciosModal() {
+  if (!consulta.hosi_folio) {
+    error.value = "Seleccione una cita (folio)";
+    return;
+  }
+  serviciosModalOpen.value = true;
+}
+
 function copiarUltimosSignos() {
   const u = ultimosSignos.value;
-  if (!u) return;
+  if (!u || signosCapturaBloqueada.value) return;
   signos.pulso = String(u.pulso ?? "");
   signos.respiracion = String(u.respiracion ?? "");
   signos.tension_sis = String(u.tension_sis ?? "");
@@ -1280,6 +1286,11 @@ function copiarUltimosSignos() {
   signos.estatura = String(u.estatura ?? "");
   signos.abdominal = String(u.abdominal ?? "");
   signos.saturacion = String((u as SignosRow).saturacion ?? "");
+}
+
+/** Acción de UI deshabilitada de forma permanente (precarga interna usa copiarUltimosSignos). */
+function copiarAntecedenteDesdeUi() {
+  /* botón siempre bloqueado */
 }
 
 /** Contexto de la cita en uso (acomodo tipo siah-web). */
@@ -1348,15 +1359,22 @@ function matchesAgendaFocusTab(row: Record<string, unknown>, focus: typeof agend
   return true;
 }
 
-const rowsBaseFiltradas = computed(() => {
+/** Alcance médico/especialidad (sin búsqueda ni tab de foco): KPIs e impresión. */
+const rowsScopeAgenda = computed(() => {
   const permitidas = medicoSesionLocked.value
     ? new Set(especialidadesMedico.value.map((e) => Number(e.esps_espserv)))
     : null;
-  const q = agendaBusqueda.value.trim().toLowerCase();
   return rows.value.filter((r) => {
     if (permitidas && permitidas.size && !permitidas.has(Number(r.esps_espserv))) return false;
     if (agendaFiltroEsp.value != null && Number(r.esps_espserv) !== agendaFiltroEsp.value) return false;
     if (agendaFiltroMed.value && String(r.medc_ficha || "") !== agendaFiltroMed.value) return false;
+    return true;
+  });
+});
+
+const rowsBaseFiltradas = computed(() => {
+  const q = agendaBusqueda.value.trim().toLowerCase();
+  return rowsScopeAgenda.value.filter((r) => {
     if (agendaFiltroEstatus.value != null && Number(r.cits_estatus) !== agendaFiltroEstatus.value) return false;
     if (q) {
       const haystack = [
@@ -1383,7 +1401,8 @@ const agendaKpisDia = computed(() => {
   let espera = 0;
   let atendido = 0;
   let todo = 0;
-  for (const row of rows.value) {
+  const scope = rowsScopeAgenda.value;
+  for (const row of scope) {
     const kind = agendaEstatusFocus(row.cits_estatus);
     if (kind === "pending") {
       confirmar += 1;
@@ -1396,7 +1415,7 @@ const agendaKpisDia = computed(() => {
     }
   }
   return {
-    total: rows.value.length,
+    total: scope.length,
     confirmar,
     espera,
     atendido,
@@ -1548,24 +1567,6 @@ const consultaStatusLine = computed(() => {
   return `${dia.charAt(0).toUpperCase()}${dia.slice(1)}, ${d.getDate()} de ${mes} de ${d.getFullYear()} · Folio ${folio} · Consulta iniciada ${inicio}`;
 });
 
-const agendaSessionContext = computed(() => {
-  const medico =
-    (medicoSesionLocked.value &&
-      medicosAsignables.value.find((m) => m.medc_ficha === medicoSesionFicha.value)?.medc_nombre) ||
-    selectedAgendaRow.value?.medico ||
-    selectedAgendaRow.value?.medc_nombre ||
-    props.session.username ||
-    "—";
-  const esp =
-    especialidadesMedico.value.length === 1
-      ? especialidadesMedico.value[0]?.espc_descrip
-      : agendaFiltroEsp.value != null
-        ? especialidadesMedico.value.find((e) => Number(e.esps_espserv) === agendaFiltroEsp.value)
-            ?.espc_descrip
-        : especialidadesMedico.value[0]?.espc_descrip || "—";
-  return `${medico} · ${esp || "—"} · Unidad ${props.session.unitrab}`;
-});
-
 const agendaDayTitle = computed(() => {
   if (!fecha.value) return "Agenda del día";
   const d = new Date(`${fecha.value.slice(0, 10)}T12:00:00`);
@@ -1708,7 +1709,7 @@ function agendaRowClasses(row: Record<string, unknown>): string[] {
 
 const tiempoEsperaProm = computed(() => {
   const mins: number[] = [];
-  for (const row of rows.value) {
+  for (const row of rowsScopeAgenda.value) {
     const cita = Number(row.citn_hrcita);
     const llegada = Number(row.cits_hrllegada);
     if (!Number.isFinite(cita) || !Number.isFinite(llegada) || llegada <= 0) continue;
@@ -1748,7 +1749,8 @@ function openConsultaFromAgenda(row: Record<string, unknown>) {
 }
 
 function imprimirAgenda() {
-  if (!rows.value.length) {
+  const scope = rowsScopeAgenda.value;
+  if (!scope.length) {
     error.value = "No hay citas para imprimir en esta fecha";
     return;
   }
@@ -1757,7 +1759,7 @@ function imprimirAgenda() {
     error.value = "El navegador bloqueó la ventana de impresión";
     return;
   }
-  const rowsHtml = rows.value
+  const rowsHtml = scope
     .map(
       (r, i) =>
         `<tr>
@@ -2012,12 +2014,16 @@ function normalizeProcedencia(raw: unknown): { label: string; className: string 
   return { label: value, className: "siah-badge siah-badge--local" };
 }
 
+function procedenciaRaw(row: Record<string, unknown>): unknown {
+  return row.locfor || row.procedencia || row.derc_procedencia || row.ders_locfor;
+}
+
 function procedenciaBadgeClass(row: Record<string, unknown>): string {
-  return normalizeProcedencia(row.procedencia || row.derc_procedencia || row.ders_locfor)?.className || "";
+  return normalizeProcedencia(procedenciaRaw(row))?.className || "";
 }
 
 function procedenciaBadgeLabel(row: Record<string, unknown>): string {
-  return normalizeProcedencia(row.procedencia || row.derc_procedencia || row.ders_locfor)?.label || "";
+  return normalizeProcedencia(procedenciaRaw(row))?.label || "";
 }
 
 function clearPaciente() {
@@ -2973,9 +2979,7 @@ async function doSignos() {
     return;
   }
   if (signosCapturaBloqueada.value) {
-    error.value = consultaTieneSignos.value
-      ? "Los signos vitales de esta consulta ya fueron grabados."
-      : "La nota ya está grabada; no se pueden modificar los signos.";
+    error.value = "La nota ya está grabada; no se pueden modificar los signos.";
     return;
   }
   const required: [keyof typeof signos, string][] = [
@@ -3004,7 +3008,7 @@ async function doSignos() {
     okMsg.value = res.mensaje;
     await loadUltimosSignos();
     // Si el API no devolvió hosi_folio en "últimos", fijar contexto de la toma actual
-    // para que consultaTieneSignos bloquee de inmediato la recaptura.
+    // para que consultaTieneSignos (gate SOAP / badge) refleje la captura.
     if (!consultaTieneSignos.value && Number(signos.hosi_folio) > 0) {
       ultimosSignos.value = {
         ...(ultimosSignos.value || {}),
@@ -3150,12 +3154,12 @@ onMounted(async () => {
           </UButton>
         </div>
         <div v-if="tab === 'agenda'" class="siah-agenda-medica siah-agenda-focus">
-          <p class="siah-crumb">Atención médica / Agenda médica</p>
-          <div class="siah-agenda-head">
-            <div>
-              <h1 class="siah-page-title">AGENDA MÉDICA</h1>
-              <div class="siah-session-context">{{ agendaSessionContext }}</div>
-            </div>
+          <div class="siah-compact-metrics">
+            <span>▦ Citas del día <b>{{ agendaKpis.total }}</b></span>
+            <span class="siah-metric--wait">◷ En espera <b>{{ agendaKpis.espera }}</b></span>
+            <span class="siah-metric--pending">◷ Por confirmar <b>{{ agendaKpis.confirmar }}</b></span>
+            <span class="siah-metric--done">✓ Atendidos <b>{{ agendaKpis.atendido }}</b></span>
+            <span>Espera / consulta promedio <b>{{ tiempoEsperaProm }} / {{ tiempoConsultaProm }}</b></span>
             <div class="siah-top-actions">
               <button type="button" class="siah-proto-btn" :disabled="loading" @click="load">
                 ↻ Verificar citas
@@ -3163,20 +3167,12 @@ onMounted(async () => {
               <button
                 type="button"
                 class="siah-proto-btn"
-                :disabled="!rows.length"
+                :disabled="!rowsScopeAgenda.length"
                 @click="imprimirAgenda"
               >
                 Imprimir
               </button>
             </div>
-          </div>
-
-          <div class="siah-compact-metrics">
-            <span>▦ Citas del día <b>{{ agendaKpis.total }}</b></span>
-            <span class="siah-metric--wait">◷ En espera <b>{{ agendaKpis.espera }}</b></span>
-            <span class="siah-metric--pending">◷ Por confirmar <b>{{ agendaKpis.confirmar }}</b></span>
-            <span class="siah-metric--done">✓ Atendidos <b>{{ agendaKpis.atendido }}</b></span>
-            <span>Espera / consulta promedio <b>{{ tiempoEsperaProm }} / {{ tiempoConsultaProm }}</b></span>
           </div>
 
           <div v-if="!medicoSesionLocked" class="siah-agenda-extra-filters">
@@ -3285,18 +3281,19 @@ onMounted(async () => {
                     <th>INICIO</th>
                     <th>FICHA</th>
                     <th>PACIENTE</th>
-                    <th>MOTIVO DE CONSULTA</th>
-                    <th>DIAGNÓSTICO DE CONSULTA</th>
+                    <th title="Local / Foráneo">LOC/FOR</th>
+                    <th title="Motivo de consulta">MOTIVO</th>
+                    <th title="Diagnóstico de consulta">DIAGNÓSTICO</th>
                     <th>ESTATUS</th>
                     <th>ACCIONES</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="loading && !rowsFiltradas.length">
-                    <td colspan="11" class="siah-empty-focus">Cargando…</td>
+                    <td colspan="12" class="siah-empty-focus">Cargando…</td>
                   </tr>
                   <tr v-else-if="!rowsFiltradas.length">
-                    <td colspan="11" class="siah-empty-focus">
+                    <td colspan="12" class="siah-empty-focus">
                       No hay citas en esta vista para la fecha seleccionada.<br />
                       <span class="siah-muted">Puedes cambiar de estado o consultar otra fecha.</span>
                     </td>
@@ -3319,9 +3316,15 @@ onMounted(async () => {
                     <td>{{ row.derc_ficha }}</td>
                     <td>
                       <span class="siah-patient-link">{{ row.paciente }}</span>
-                      <div v-if="procedenciaBadgeLabel(row)" class="siah-patient-origin">
-                        <span :class="procedenciaBadgeClass(row)">{{ procedenciaBadgeLabel(row) }}</span>
-                      </div>
+                    </td>
+                    <td>
+                      <span
+                        v-if="procedenciaBadgeLabel(row)"
+                        :class="procedenciaBadgeClass(row)"
+                      >
+                        {{ procedenciaBadgeLabel(row) }}
+                      </span>
+                      <span v-else>—</span>
                     </td>
                     <td>{{ row.motivo_consulta || "—" }}</td>
                     <td>{{ row.diagnostico || "—" }}</td>
@@ -3768,7 +3771,6 @@ onMounted(async () => {
         </div>
 
         <div v-else-if="tab === 'consulta'" class="siah-note-main siah-note-tabs-layout min-w-0">
-          <p class="siah-crumb">Atención médica / Consulta / Nota médica</p>
           <div class="siah-agenda-head">
             <div>
               <h1 class="siah-page-title">REGISTRO DE NOTA MÉDICA</h1>
@@ -3990,6 +3992,17 @@ onMounted(async () => {
                   >
                     Solicitudes
                   </button>
+                  <!--
+                  <button
+                    type="button"
+                    class="siah-proto-btn"
+                    :disabled="!consulta.hosi_folio || !notaBloqueada"
+                    title="Disponible solo después de grabar la nota"
+                    @click="openServiciosModal"
+                  >
+                    Servicios
+                  </button>
+                  -->
                   <button
                     type="button"
                     class="siah-proto-btn"
@@ -4098,16 +4111,19 @@ onMounted(async () => {
                       <span v-if="signosClasificacion"> · {{ signosClasificacion }}</span>
                       <span v-if="signosTensionClasificacion"> · TA {{ signosTensionClasificacion }}</span>
                     </p>
-                    <p v-if="consultaTieneSignos" class="siah-helper">
-                      Signos vitales ya grabados para esta consulta. No se pueden volver a registrar.
+                    <p v-if="consultaTieneSignos && !notaBloqueada" class="siah-helper">
+                      Ya hay signos de esta consulta; puede actualizarlos.
+                    </p>
+                    <p v-else-if="notaBloqueada" class="siah-helper">
+                      Nota grabada: los signos vitales quedan en solo lectura.
                     </p>
                     <div class="siah-vital-toolbar">
                       <button
                         type="button"
                         class="siah-proto-btn"
-                        :disabled="!ultimosSignos || signosCapturaBloqueada"
-                        :title="ultimosFechaLabel || 'Última toma del paciente'"
-                        @click="copiarUltimosSignos"
+                        disabled
+                        title="Copiar antecedente no disponible"
+                        @click="copiarAntecedenteDesdeUi"
                       >
                         Copiar antecedente
                       </button>
@@ -4117,7 +4133,13 @@ onMounted(async () => {
                         :disabled="loading || signosCapturaBloqueada"
                         @click="doSignos"
                       >
-                        {{ consultaTieneSignos ? "Signos grabados" : "Grabar signos vitales" }}
+                        {{
+                          notaBloqueada
+                            ? "Signos bloqueados"
+                            : consultaTieneSignos
+                              ? "Actualizar signos vitales"
+                              : "Grabar signos vitales"
+                        }}
                       </button>
                     </div>
                   </div>
@@ -4824,8 +4846,9 @@ onMounted(async () => {
       :ultimos-tension-clasificacion="ultimosTensionClasificacion"
       :ultimos-fecha-label="ultimosFechaLabel"
       :read-only="signosCapturaBloqueada"
+      :copy-disabled="true"
       @graba="doSignos"
-      @copiar="copiarUltimosSignos"
+      @copiar="copiarAntecedenteDesdeUi"
       @close="closeSignosModal"
     />
 
