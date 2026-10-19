@@ -68,7 +68,15 @@ const loading = ref(false);
 const error = ref("");
 const okMsg = ref("");
 const rows = ref<Record<string, unknown>[]>([]);
-const fecha = ref(new Date().toISOString().slice(0, 10));
+
+function fechaLocalIso(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+const fecha = ref(fechaLocalIso());
 const tab = ref<"agenda" | "asignar" | "consulta">("agenda");
 /** Rail izquierdo: menú de módulos y/o acciones+mini-cal de agenda. */
 const showAsideRail = computed(() => showChromeNav.value || tab.value === "agenda");
@@ -103,7 +111,7 @@ const asignar = reactive({
   medc_ficha: "900002",
   medc_codigo: "00",
   medicoKey: "900002|00|101",
-  fecha: new Date().toISOString().slice(0, 10),
+  fecha: fechaLocalIso(),
   hora: 900,
   folioConsulta: "",
   observaciones: "",
@@ -134,8 +142,10 @@ const paciente = reactive({
 });
 
 const photoFailed = ref(false);
+const patientPhotoSrc = ref("");
+const photoError = ref("");
 const selectedAgendaRow = ref<Record<string, unknown> | null>(null);
-const calMonth = ref(new Date().toISOString().slice(0, 7));
+const calMonth = ref(fechaLocalIso().slice(0, 7));
 
 const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 const DIAS_CAL = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
@@ -231,6 +241,7 @@ const censoConfirmPendientes = ref<string[]>([]);
 
 const procedimientosSel = ref<{ clave: string; descripcion: string }[]>([]);
 const procQ = ref("");
+const procPendiente = ref<{ clave: string; descripcion: string } | null>(null);
 
 function onPickCieMotivo(hit: { clave: string; descripcion: string }) {
   if (notaBloqueada.value) return;
@@ -269,37 +280,84 @@ async function aplicarTipoconSugerido(cie?: string) {
   }
 }
 
-function onPickCieDx(hit: { clave: string; descripcion: string }, slot = 1) {
+const dxClaves = [
+  "diai_clacie1",
+  "diai_clacie2",
+  "diai_clacie3",
+  "diai_clacie4",
+  "diai_clacie5",
+] as const;
+const dxTextos = [
+  "diagnosticoTexto",
+  "diagnosticoTexto2",
+  "diagnosticoTexto3",
+  "diagnosticoTexto4",
+  "diagnosticoTexto5",
+] as const;
+
+function dxClave(slot: number): string {
+  return String(consulta[dxClaves[slot - 1]] || "").trim();
+}
+
+function dxTexto(slot: number): string {
+  return String(consulta[dxTextos[slot - 1]] || "").trim();
+}
+
+const diagnosticosTabla = computed(() => {
+  const filas: { slot: number; clave: string; texto: string }[] = [];
+  for (let slot = 1; slot <= 5; slot += 1) {
+    const clave = dxClave(slot);
+    const texto = dxTexto(slot);
+    if (clave || texto) filas.push({ slot, clave, texto });
+  }
+  return filas;
+});
+
+function onPickCieDx(hit: { clave: string; descripcion: string }) {
   if (notaBloqueada.value) return;
   const clave = hit.clave.slice(0, 5).toUpperCase();
-  if (slot === 1) {
-    consulta.diai_clacie1 = clave;
-    consulta.diagnosticoTexto = hit.descripcion;
-    void aplicarTipoconSugerido(clave);
-  } else if (slot === 2) {
-    consulta.diai_clacie2 = clave;
-    consulta.diagnosticoTexto2 = hit.descripcion;
-  } else if (slot === 3) {
-    consulta.diai_clacie3 = clave;
-    consulta.diagnosticoTexto3 = hit.descripcion;
-  } else if (slot === 4) {
-    consulta.diai_clacie4 = clave;
-    consulta.diagnosticoTexto4 = hit.descripcion;
-  } else {
-    consulta.diai_clacie5 = clave;
-    consulta.diagnosticoTexto5 = hit.descripcion;
+  const texto = hit.descripcion;
+  let slot = 0;
+  for (let i = 1; i <= 5; i += 1) {
+    if (dxClave(i).toUpperCase() === clave) {
+      consulta[dxTextos[i - 1]] = texto;
+      return;
+    }
+    if (!slot && !dxClave(i)) slot = i;
   }
+  if (!slot) return;
+  consulta[dxClaves[slot - 1]] = clave;
+  consulta[dxTextos[slot - 1]] = texto;
+  dxSlotsVisible.value = Math.max(dxSlotsVisible.value, slot);
+  if (slot === 1) void aplicarTipoconSugerido(clave);
 }
 
-function agregarDiagnostico() {
-  if (notaBloqueada.value) return;
-  if (dxSlotsVisible.value < 5) dxSlotsVisible.value += 1;
+function quitarDiagnostico(slot: number) {
+  if (notaBloqueada.value || slot < 1 || slot > 5) return;
+  for (let i = slot; i < 5; i += 1) {
+    consulta[dxClaves[i - 1]] = consulta[dxClaves[i]];
+    consulta[dxTextos[i - 1]] = consulta[dxTextos[i]];
+  }
+  consulta.diai_clacie5 = "";
+  consulta.diagnosticoTexto5 = "";
+  const ocupados = diagnosticosTabla.value.length;
+  dxSlotsVisible.value = Math.max(1, ocupados);
 }
 
-async function onPickProcedimiento(hit: { clave: string; descripcion: string }) {
-  if (procedimientosSel.value.some((p) => p.clave === hit.clave)) return;
+function onPickProcedimiento(hit: { clave: string; descripcion: string }) {
+  procPendiente.value = { clave: hit.clave, descripcion: hit.descripcion };
+  procQ.value = `${hit.clave} ${hit.descripcion}`.trim();
+}
+
+async function registrarProcedimiento() {
+  const hit = procPendiente.value;
+  if (!hit) return;
+  if (procedimientosSel.value.some((p) => p.clave === hit.clave)) {
+    procPendiente.value = null;
+    procQ.value = "";
+    return;
+  }
   const line = `PROCEDIMIENTO: ${hit.clave} ${hit.descripcion}`.trim();
-  procQ.value = "";
   if (notaBloqueada.value) {
     if (!consulta.hosi_folio) return;
     loading.value = true;
@@ -312,6 +370,8 @@ async function onPickProcedimiento(hit: { clave: string; descripcion: string }) 
       });
       if (res.record?.plan != null) consulta.plan = String(res.record.plan);
       procedimientosSel.value.push({ clave: hit.clave, descripcion: hit.descripcion });
+      procPendiente.value = null;
+      procQ.value = "";
     } catch (e) {
       error.value = e instanceof Error ? e.message : "No se pudo anexar el procedimiento";
     } finally {
@@ -324,6 +384,8 @@ async function onPickProcedimiento(hit: { clave: string; descripcion: string }) 
   if (!plan.includes(hit.clave)) {
     consulta.plan = plan ? `${plan}\n${line}` : line;
   }
+  procPendiente.value = null;
+  procQ.value = "";
 }
 
 function quitarProcedimiento(clave: string) {
@@ -418,6 +480,7 @@ const censoAltaTipo = ref("");
 
 function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergias") {
   if (notaBloqueada.value) return;
+  if (campo === "obesidad") return;
   if (campo === "diabetes" || campo === "hipertension") {
     if (censoBase[campo] || notaCronica[campo] === "positivo") return;
     censoAltaCampo.value = campo;
@@ -508,6 +571,8 @@ function syncCronicosEnAnalisis() {
 }
 
 const consultaPhotoFailed = ref(false);
+const consultaPhotoSrc = ref("");
+const consultaPhotoError = ref("");
 const consultaLoadedFolio = ref(0);
 
 const signos = reactive({
@@ -658,39 +723,34 @@ function formatSignosResumenLinea(s: {
 }
 
 // Solo el bloque generado (hasta SATURACION O2). El plan escrito antes o después sí cuenta.
-const SIGNOS_PLAN_RE = /SIGNOS VITALES:\s*PULSO:[\s\S]*?SATURACION O2:\s*\S+\s*%/i;
-
-function fraseTipoConsulta(): string {
-  if (consulta.enfermedadSub || consulta.conn_tipocon === "S") return "CONSULTA DE SEGUIMIENTO";
-  if (consulta.enfermedadPrimeraVez || consulta.conn_tipocon === "P") return "CONSULTA DE PRIMERA VEZ";
-  return "";
-}
+const SIGNOS_PLAN_RE = /^SIGNOS VITALES:\s*PULSO:.*SATURACION O2:\s*\S+\s*%/im;
 
 function bloquePlanAutomatico(): string {
-  const toma =
-    ultimosSignos.value && Number(ultimosSignos.value.hosi_folio || 0) === Number(citaCtx.hosi_folio || 0)
-      ? formatSignosResumenLinea(ultimosSignos.value)
-      : "";
-  return [toma, fraseTipoConsulta()].filter(Boolean).join(" ");
+  if (
+    !ultimosSignos.value ||
+    Number(ultimosSignos.value.hosi_folio || 0) !== Number(citaCtx.hosi_folio || 0)
+  ) {
+    return "";
+  }
+  return formatSignosResumenLinea(ultimosSignos.value);
 }
 
-function syncSignosEnPlan(resumen: string) {
-  const block = (resumen || bloquePlanAutomatico()).trim();
-  if (!block || notaBloqueada.value) return;
-  const plan = (consulta.plan || "").trim();
-  const auto =
-    /SIGNOS VITALES:\s*PULSO:[\s\S]*?SATURACION O2:\s*\S+\s*%(?:\s*CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ))?/i;
-  if (!plan) {
-    consulta.plan = block;
-    return;
+function syncSignosEnPlan(resumen?: string) {
+  if (notaBloqueada.value) return;
+  const block = (resumen ?? bloquePlanAutomatico()).trim();
+  let plan = (consulta.plan || "")
+    .replace(/CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ)/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (SIGNOS_PLAN_RE.test(plan)) {
+    plan = plan.replace(SIGNOS_PLAN_RE, block).trim();
+  } else if (block) {
+    plan = plan ? `${block}\n${plan}` : block;
   }
-  if (auto.test(plan)) {
-    consulta.plan = plan.replace(auto, block).trim();
-  } else if (SIGNOS_PLAN_RE.test(plan)) {
-    consulta.plan = plan.replace(SIGNOS_PLAN_RE, block).trim();
-  } else {
-    consulta.plan = `${plan}\n${block}`.trim();
+  if (block && plan.startsWith(block) && !plan.slice(block.length).trim()) {
+    plan = `${block}\n`;
   }
+  consulta.plan = plan.replace(/\n{3,}/g, "\n\n").trimEnd();
 }
 
 const signosTensionClasificacion = computed(() =>
@@ -753,7 +813,7 @@ const agendaAsignarPageRows = computed(() => {
   return rows.value.slice(start, start + AGENDA_ASIGNAR_PAGE_SIZE);
 });
 
-const hoyIso = computed(() => new Date().toISOString().slice(0, 10));
+const hoyIso = computed(() => fechaLocalIso());
 
 const pacienteVigenciaLabel = computed((): "VIGENTE" | "NO VIGENTE" | "SIN DATO" => {
   if (!pacienteBuscado.value) return "SIN DATO";
@@ -910,7 +970,7 @@ const PRECARGA_SINTOMAS_RE =
   /SE TRATA DE\s+.+?OBESIDAD\/SOBREPESO\s+(?:NO\s+)?REGISTRADO\.?\s*/i;
 const PRECARGA_ANALISIS_RE =
   /(?:PACIENTE REFIERE SER ALERGICO A[^\n]*|ALERGIAS NO REGISTRADAS)\s*/i;
-const PRECARGA_PLAN_RE = /CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ)/i;
+const PRECARGA_PLAN_RE = /CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ)/gi;
 const MOTIVO_MARK_RE = /\[\[MC:[^\]]*\]\]/g;
 const ANTECEDENTES_RE = /ANTECEDENTES CRONICOS:[\s\S]*?(?:\n\n|$)/i;
 
@@ -1213,6 +1273,49 @@ const consultaPhotoUrl = computed(() => {
   });
   return `${base}${prefix.value}/derech/foto?${qs.toString()}`;
 });
+
+async function cargarFoto(url: string, destino: "agenda" | "consulta") {
+  const src = destino === "agenda" ? patientPhotoSrc : consultaPhotoSrc;
+  const fail = destino === "agenda" ? photoFailed : consultaPhotoFailed;
+  const msg = destino === "agenda" ? photoError : consultaPhotoError;
+  if (src.value.startsWith("blob:")) URL.revokeObjectURL(src.value);
+  src.value = "";
+  msg.value = "";
+  fail.value = false;
+  if (!url) return;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      fail.value = true;
+      let detail = "";
+      try {
+        const body = (await res.json()) as { detail?: string };
+        detail = String(body?.detail || "");
+      } catch {
+        detail = "";
+      }
+      msg.value = detail || "Sin fotografía";
+      return;
+    }
+    const blob = await res.blob();
+    if (!blob.type.startsWith("image/")) {
+      fail.value = true;
+      msg.value = "La respuesta no es una imagen";
+      return;
+    }
+    src.value = URL.createObjectURL(blob);
+  } catch {
+    fail.value = true;
+    msg.value = "No se pudo consultar la fotografía";
+  }
+}
+
+watch(patientPhotoUrl, (url) => {
+  void cargarFoto(url, "agenda");
+}, { immediate: true });
+watch(consultaPhotoUrl, (url) => {
+  void cargarFoto(url, "consulta");
+}, { immediate: true });
 
 const consultaStatusLine = computed(() => {
   const d = new Date(`${fecha.value.slice(0, 10)}T12:00:00`);
@@ -2009,6 +2112,7 @@ function selectCita(row: Record<string, unknown>) {
     dxSlotsVisible.value = 1;
     procedimientosSel.value = [];
     procQ.value = "";
+    procPendiente.value = null;
     consultaLoadedFolio.value = 0;
   }
 }
@@ -2203,6 +2307,7 @@ function limpiarConsulta() {
   antecedentesVisitados.value = false;
   procedimientosSel.value = [];
   procQ.value = "";
+  procPendiente.value = null;
 }
 
 function openExpedienteConsulta() {
@@ -2330,7 +2435,6 @@ function altasCensoPendientes(): string[] {
   const out: string[] = [];
   if (notaCronica.diabetes === "positivo" && !censoBase.diabetes) out.push("diabetes");
   if (notaCronica.hipertension === "positivo" && !censoBase.hipertension) out.push("hipertensión");
-  if (notaCronica.obesidad === "positivo" && !censoBase.obesidad) out.push("obesidad/sobrepeso");
   return out;
 }
 
@@ -2886,15 +2990,15 @@ onMounted(async () => {
               <div class="siah-paciente-card">
                 <div class="siah-foto-wrap">
                   <img
-                    v-if="patientPhotoUrl && !photoFailed"
-                    :src="patientPhotoUrl"
+                    v-if="patientPhotoSrc && !photoFailed"
+                    :src="patientPhotoSrc"
                     alt="Foto del paciente"
                     class="siah-foto"
                     @error="photoFailed = true"
                   />
                   <div v-else class="siah-foto siah-foto--placeholder">
                     <span v-if="paciente.loading">…</span>
-                    <span v-else>SIN FOTO</span>
+                    <span v-else class="px-1 text-center text-[0.6rem] leading-tight">{{ photoError || "SIN FOTO" }}</span>
                   </div>
                 </div>
                 <div class="siah-paciente-card__body">
@@ -3228,17 +3332,17 @@ onMounted(async () => {
               </div>
               <div class="self-stretch">
                 <img
-                  v-if="consultaPhotoUrl && !consultaPhotoFailed"
-                  :src="consultaPhotoUrl"
+                  v-if="consultaPhotoSrc && !consultaPhotoFailed"
+                  :src="consultaPhotoSrc"
                   alt="Foto del paciente"
                   class="w-full min-h-[88px] max-w-[120px] md:max-w-none object-cover rounded-lg border border-default bg-elevated"
                   @error="consultaPhotoFailed = true"
                 />
                 <div
                   v-else
-                  class="flex items-center justify-center w-full min-h-[88px] max-w-[120px] md:max-w-none rounded-lg border border-default bg-elevated text-[0.65rem] font-bold text-muted"
+                  class="flex items-center justify-center w-full min-h-[88px] max-w-[120px] md:max-w-none rounded-lg border border-default bg-elevated px-1 text-center text-[0.6rem] font-bold leading-tight text-muted"
                 >
-                  SIN FOTO
+                  {{ consultaPhotoError || "SIN FOTO" }}
                 </div>
               </div>
             </div>
@@ -3281,11 +3385,9 @@ onMounted(async () => {
                     {{ notaCronica.hipertension === "positivo" ? "REGISTRADA" : "NO REGISTRADA" }}
                   </UBadge>
                 </button>
-                <button
-                  type="button"
-                  class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
-                  :disabled="notaBloqueada"
-                  @click="toggleCronico('obesidad')"
+                <div
+                  class="flex flex-col items-center gap-1 rounded-lg border border-default p-2"
+                  title="Se registra con los signos vitales cuando el IMC es 25 o mayor."
                 >
                   <span class="text-xs font-bold text-muted">OBESIDAD</span>
                   <UBadge
@@ -3295,7 +3397,7 @@ onMounted(async () => {
                   >
                     {{ notaCronica.obesidad === "positivo" ? "REGISTRADA" : "NO REGISTRADA" }}
                   </UBadge>
-                </button>
+                </div>
                 <button
                   type="button"
                   class="flex flex-col items-center gap-1 rounded-lg border border-default p-2 hover:bg-elevated"
@@ -3484,7 +3586,7 @@ onMounted(async () => {
                   class="w-full min-w-0"
                   :ui="notaFieldUi"
                   :hint="soapHint(soapLens.plan)"
-                  :error="soapLens.plan < SOAP_MIN_CHARS ? `Mínimo ${SOAP_MIN_CHARS} caracteres además de signos y el tipo de consulta.` : undefined"
+                  :error="soapLens.plan < SOAP_MIN_CHARS ? `Mínimo ${SOAP_MIN_CHARS} caracteres además de los signos vitales.` : undefined"
                 >
                   <UTextarea
                     v-model="consulta.plan"
@@ -3508,27 +3610,46 @@ onMounted(async () => {
                   label="Buscar CIE-10 (diagnóstico)"
                   placeholder="Clave o descripción (≥2 caracteres)…"
                   :disabled="notaBloqueada"
-                  @select="onPickCieDx($event, dxSlotsVisible)"
+                  @select="onPickCieDx"
                 />
+                <div class="overflow-x-auto rounded-md border border-default">
+                  <table class="w-full text-sm">
+                    <thead class="bg-elevated/60 text-left text-xs uppercase text-muted">
+                      <tr>
+                        <th class="px-2 py-1 w-24">CIE-10</th>
+                        <th class="px-2 py-1">Descripción</th>
+                        <th class="px-2 py-1 w-24"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="!diagnosticosTabla.length">
+                        <td colspan="3" class="px-2 py-2 text-xs text-muted">
+                          Busque el diagnóstico y selecciónelo. Aquí se agrupan la clave y la descripción.
+                        </td>
+                      </tr>
+                      <tr
+                        v-for="fila in diagnosticosTabla"
+                        :key="fila.slot"
+                        class="border-t border-default"
+                      >
+                        <td class="px-2 py-1 font-mono">{{ fila.clave }}</td>
+                        <td class="px-2 py-1 whitespace-normal break-words">{{ fila.texto || "—" }}</td>
+                        <td class="px-2 py-1 text-right">
+                          <UButton
+                            label="Quitar"
+                            icon="i-lucide-x"
+                            size="xs"
+                            color="neutral"
+                            variant="ghost"
+                            :disabled="notaBloqueada"
+                            @click="quitarDiagnostico(fila.slot)"
+                          />
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
                 <div class="flex flex-wrap items-end gap-3">
-                  <UFormField label="CIE-10" class="w-24">
-                    <UInput
-                      v-model="consulta.diai_clacie1"
-                      maxlength="5"
-                      placeholder="Ej. R51X"
-                      size="sm"
-                      class="uppercase"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                  <UFormField label="Diagnóstico de consulta" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
-                    <UInput
-                      v-model="consulta.diagnosticoTexto"
-                      size="sm"
-                      class="w-full min-w-0"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
                   <span class="text-xs font-bold text-muted pb-2">ENFERMEDAD</span>
                   <UCheckbox
                     :model-value="consulta.enfermedadPrimeraVez"
@@ -3545,15 +3666,6 @@ onMounted(async () => {
                   <span v-if="tipoconMotivo" class="text-[0.65rem] text-muted pb-2 max-w-xs">
                     {{ tipoconMotivo }}
                   </span>
-                  <UButton
-                    icon="i-lucide-plus"
-                    color="primary"
-                    variant="soft"
-                    size="sm"
-                    title="Agregar diagnóstico (máx. 5)"
-                    :disabled="notaBloqueada || dxSlotsVisible >= 5"
-                    @click="agregarDiagnostico"
-                  />
                   <UButton
                     class="ml-auto"
                     :label="notaBloqueada ? 'NOTA GRABADA' : 'GRABAR NOTA'"
@@ -3573,98 +3685,33 @@ onMounted(async () => {
                     @click="doConsulta"
                   />
                 </div>
-                <div v-if="dxSlotsVisible >= 2" class="flex flex-wrap items-end gap-3">
-                  <UFormField label="CIE-10 (2)" class="w-24">
-                    <UInput
-                      v-model="consulta.diai_clacie2"
-                      maxlength="5"
-                      size="sm"
-                      class="uppercase"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                  <UFormField label="Diagnóstico 2" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
-                    <UInput
-                      v-model="consulta.diagnosticoTexto2"
-                      size="sm"
-                      class="w-full min-w-0"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                </div>
-                <div v-if="dxSlotsVisible >= 3" class="flex flex-wrap items-end gap-3">
-                  <UFormField label="CIE-10 (3)" class="w-24">
-                    <UInput
-                      v-model="consulta.diai_clacie3"
-                      maxlength="5"
-                      size="sm"
-                      class="uppercase"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                  <UFormField label="Diagnóstico 3" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
-                    <UInput
-                      v-model="consulta.diagnosticoTexto3"
-                      size="sm"
-                      class="w-full min-w-0"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                </div>
-                <div v-if="dxSlotsVisible >= 4" class="flex flex-wrap items-end gap-3">
-                  <UFormField label="CIE-10 (4)" class="w-24">
-                    <UInput
-                      v-model="consulta.diai_clacie4"
-                      maxlength="5"
-                      size="sm"
-                      class="uppercase"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                  <UFormField label="Diagnóstico 4" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
-                    <UInput
-                      v-model="consulta.diagnosticoTexto4"
-                      size="sm"
-                      class="w-full min-w-0"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                </div>
-                <div v-if="dxSlotsVisible >= 5" class="flex flex-wrap items-end gap-3">
-                  <UFormField label="CIE-10 (5)" class="w-24">
-                    <UInput
-                      v-model="consulta.diai_clacie5"
-                      maxlength="5"
-                      size="sm"
-                      class="uppercase"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                  <UFormField label="Diagnóstico 5" class="min-w-0 flex-1 w-full" :ui="notaFieldUi">
-                    <UInput
-                      v-model="consulta.diagnosticoTexto5"
-                      size="sm"
-                      class="w-full min-w-0"
-                      :disabled="notaBloqueada"
-                    />
-                  </UFormField>
-                </div>
               </div>
             </AtmedSectionCard>
 
             <AtmedSectionCard title="Procedimientos médicos">
               <p class="text-[0.7rem] text-muted m-0 mb-2">
-                Catálogo CIE-9. Se anexa al Plan. Con la nota ya grabada, el texto se concatena y no sustituye el plan.
+                Busque el procedimiento, selecciónelo y regístrelo con el botón. Se anexa al Plan.
               </p>
-              <CatalogAutocomplete
-                v-model="procQ"
-                :api-base="apiBase"
-                :api-prefix="apiPrefix"
-                :session="session"
-                tipo="procedimientos"
-                placeholder="Buscar procedimiento…"
-                @select="onPickProcedimiento"
-              />
+              <div class="flex flex-wrap items-end gap-2">
+                <div class="min-w-0 flex-1">
+                  <CatalogAutocomplete
+                    v-model="procQ"
+                    :api-base="apiBase"
+                    :api-prefix="apiPrefix"
+                    :session="session"
+                    tipo="procedimientos"
+                    placeholder="Buscar procedimiento…"
+                    @select="onPickProcedimiento"
+                  />
+                </div>
+                <UButton
+                  label="Registrar"
+                  color="primary"
+                  size="sm"
+                  :disabled="!procPendiente || (notaBloqueada && !consulta.hosi_folio)"
+                  @click="registrarProcedimiento"
+                />
+              </div>
               <ul v-if="procedimientosSel.length" class="mt-2 m-0 list-none space-y-1 p-0">
                 <li
                   v-for="p in procedimientosSel"
@@ -3749,7 +3796,7 @@ onMounted(async () => {
                     · {{ formatHoraNota(h.conn_horaini || h.cond_fechcon) }}
                     · {{ h.unidad_medica || h.hospital || h.unitrab || "—" }}
                     · {{ h.especialidad || "—" }}
-                    · {{ [h.diai_clacie1, h.diagnostico].filter(Boolean).join(" ") || "—" }}
+                    · {{ h.diagnostico ? `${h.diai_clacie1} — ${h.diagnostico}` : (h.diai_clacie1 || "—") }}
                     <span v-if="!h.schema_ok" class="text-error font-semibold"> · sin schema en registry</span>
                   </span>
                   <UButton
@@ -3875,9 +3922,16 @@ onMounted(async () => {
           <div class="space-y-2 text-sm max-h-[60vh] overflow-auto">
             <p class="m-0"><strong>Subjetivo.</strong> {{ historialNota?.sintomas || "—" }}</p>
             <p class="m-0"><strong>Objetivo.</strong> {{ historialNota?.objetivo || "—" }}</p>
-            <p class="m-0"><strong>Análisis.</strong> {{ historialNota?.analisis || "—" }}</p>
+            <p class="m-0 whitespace-pre-wrap"><strong>Análisis.</strong> {{ historialNota?.analisis || "—" }}</p>
             <p class="m-0 whitespace-pre-wrap"><strong>Plan.</strong> {{ historialNota?.plan || "—" }}</p>
-            <p class="m-0"><strong>Diagnóstico.</strong> {{ [historialNota?.diai_clacie1, historialNota?.diagnostico].filter(Boolean).join(" ") || "—" }}</p>
+            <p class="m-0 whitespace-pre-wrap">
+              <strong>Diagnóstico.</strong>
+              {{
+                historialNota?.diagnostico
+                  ? `${historialNota.diai_clacie1 || ""} — ${historialNota.diagnostico}`
+                  : (historialNota?.diai_clacie1 || "—")
+              }}
+            </p>
           </div>
           <div class="flex justify-end">
             <UButton label="Cerrar" color="neutral" variant="outline" size="sm" @click="historialModalOpen = false" />
