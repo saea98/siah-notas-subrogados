@@ -355,6 +355,8 @@ const censoConfirmPendientes = ref<string[]>([]);
 const procedimientosSel = ref<{ clave: string; descripcion: string }[]>([]);
 const procQ = ref("");
 const procPendiente = ref<{ clave: string; descripcion: string } | null>(null);
+const dxQ = ref("");
+const dxPendiente = ref<{ clave: string; descripcion: string } | null>(null);
 
 function onPickCieMotivo(hit: { clave: string; descripcion: string }) {
   if (notaBloqueada.value) return;
@@ -428,20 +430,38 @@ const diagnosticosTabla = computed(() => {
 
 function onPickCieDx(hit: { clave: string; descripcion: string }) {
   if (notaBloqueada.value) return;
+  dxPendiente.value = {
+    clave: hit.clave.slice(0, 5).toUpperCase(),
+    descripcion: hit.descripcion,
+  };
+  dxQ.value = [hit.clave, hit.descripcion].filter(Boolean).join(" — ");
+}
+
+function agregarDiagnostico() {
+  if (notaBloqueada.value) return;
+  const hit = dxPendiente.value;
+  if (!hit) return;
   const clave = hit.clave.slice(0, 5).toUpperCase();
   const texto = hit.descripcion;
   let slot = 0;
   for (let i = 1; i <= 5; i += 1) {
     if (dxClave(i).toUpperCase() === clave) {
       consulta[dxTextos[i - 1]] = texto;
+      dxPendiente.value = null;
+      dxQ.value = "";
       return;
     }
     if (!slot && !dxClave(i)) slot = i;
   }
-  if (!slot) return;
+  if (!slot) {
+    notifyWarning("Ya se registraron 5 diagnósticos. Quite uno para agregar otro.");
+    return;
+  }
   consulta[dxClaves[slot - 1]] = clave;
   consulta[dxTextos[slot - 1]] = texto;
   dxSlotsVisible.value = Math.max(dxSlotsVisible.value, slot);
+  dxPendiente.value = null;
+  dxQ.value = "";
   if (slot === 1) void aplicarTipoconSugerido(clave);
 }
 
@@ -2569,6 +2589,8 @@ function selectCita(row: Record<string, unknown>) {
     consulta.conn_tipocon = "";
     tipoconMotivo.value = "";
     dxSlotsVisible.value = 1;
+    dxQ.value = "";
+    dxPendiente.value = null;
     procedimientosSel.value = [];
     procQ.value = "";
     procPendiente.value = null;
@@ -2699,9 +2721,6 @@ async function loadConsultaContext(force = false) {
 
       await loadNotaGrabada();
       await loadHistorialPaciente();
-      if (!notaBloqueada.value) {
-        await aplicarTipoconSugerido();
-      }
 
       if (!notaBloqueada.value) {
         consulta.sintomas = String(preData.sintomas || consulta.sintomas || "");
@@ -2796,6 +2815,8 @@ function limpiarConsulta() {
   consulta.conn_tipocon = "";
   tipoconMotivo.value = "";
   dxSlotsVisible.value = 1;
+  dxQ.value = "";
+  dxPendiente.value = null;
   consultaLoadedFolio.value = 0;
   notaCronica.diabetes = "negativo";
   notaCronica.diabetesTipo = "";
@@ -4493,16 +4514,32 @@ onMounted(async () => {
               <div v-show="consultaUiTab === 'diagnostic'" class="siah-tab-panel" role="tabpanel">
             <AtmedSectionCard title="Diagnóstico de consulta">
               <div class="space-y-3">
-                <CatalogAutocomplete
-                  :api-base="apiBase"
-                  :api-prefix="apiPrefix"
-                  :session="session"
-                  tipo="cie10"
-                  label="Buscar CIE-10 (diagnóstico)"
-                  placeholder="Clave o descripción (≥2 caracteres)…"
-                  :disabled="notaBloqueada"
-                  @select="onPickCieDx"
-                />
+                <p class="siah-helper">
+                  Busque el diagnóstico, selecciónelo y pulse Agregar para registrarlo.
+                </p>
+                <div class="flex flex-wrap items-end gap-2">
+                  <div class="min-w-0 flex-1">
+                    <CatalogAutocomplete
+                      v-model="dxQ"
+                      :api-base="apiBase"
+                      :api-prefix="apiPrefix"
+                      :session="session"
+                      tipo="cie10"
+                      label="Buscar CIE-10 (diagnóstico)"
+                      placeholder="Clave o descripción (≥2 caracteres)…"
+                      :disabled="notaBloqueada"
+                      @select="onPickCieDx"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    class="siah-proto-btn siah-proto-btn--primary"
+                    :disabled="!dxPendiente || notaBloqueada"
+                    @click="agregarDiagnostico"
+                  >
+                    Agregar
+                  </button>
+                </div>
                 <div class="siah-consulta-ficha !border-0 overflow-x-auto">
                   <table>
                     <thead>
@@ -4515,7 +4552,7 @@ onMounted(async () => {
                     <tbody>
                       <tr v-if="!diagnosticosTabla.length">
                         <td colspan="3" class="siah-empty-focus">
-                          Busque el diagnóstico y selecciónelo. Aquí se agrupan la clave y la descripción.
+                          Busque el diagnóstico, selecciónelo y pulse Agregar.
                         </td>
                       </tr>
                       <tr v-for="fila in diagnosticosTabla" :key="fila.slot">
