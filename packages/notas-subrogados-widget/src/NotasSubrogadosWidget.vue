@@ -2637,6 +2637,26 @@ async function loadNotaGrabada() {
     notaCronica.diabetes = r.diabetes ? "positivo" : "negativo";
     notaCronica.hipertension = r.hipertension ? "positivo" : "negativo";
     notaCronica.obesidad = r.obesidad ? "positivo" : "negativo";
+    const alergiasListaApi = Array.isArray(r.alergias_lista)
+      ? (r.alergias_lista as unknown[]).map((a) => String(a || "").trim()).filter(Boolean)
+      : [];
+    const alergiasTxt = String(r.alergias_texto || r.analisis || "");
+    if (alergiasListaApi.length || r.alergias === true) {
+      notaCronica.alergias = "positivo";
+      if (alergiasListaApi.length) {
+        alergiasLista.value = alergiasListaApi;
+        syncAlergiasDetalleFromLista();
+      } else {
+        loadAlergiasListaFromTexto(alergiasTxt);
+      }
+    } else if (alergiasTxt && !alergiasTxt.toUpperCase().includes("NO REGISTRADAS")) {
+      notaCronica.alergias = "positivo";
+      loadAlergiasListaFromTexto(alergiasTxt);
+    } else {
+      notaCronica.alergias = "negativo";
+      alergiasLista.value = [];
+      notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
+    }
     procedimientosSel.value = Array.isArray(r.procedimientos)
       ? (r.procedimientos as { clave?: string; descripcion?: string }[]).map((p) => ({
           clave: String(p.clave || ""),
@@ -4871,6 +4891,14 @@ onMounted(async () => {
             <p class="m-0"><strong>Subjetivo.</strong> {{ historialNota?.sintomas || "—" }}</p>
             <p class="m-0"><strong>Objetivo.</strong> {{ historialNota?.objetivo || "—" }}</p>
             <p class="m-0 whitespace-pre-wrap"><strong>Análisis.</strong> {{ historialNota?.analisis || "—" }}</p>
+            <p class="m-0 whitespace-pre-wrap">
+              <strong>Alergias.</strong>
+              {{
+                Array.isArray(historialNota?.alergias_lista) && historialNota.alergias_lista.length
+                  ? historialNota.alergias_lista.join(", ")
+                  : (historialNota?.alergias_texto || "—")
+              }}
+            </p>
             <p class="m-0 whitespace-pre-wrap"><strong>Plan.</strong> {{ historialNota?.plan || "—" }}</p>
             <p class="m-0 whitespace-pre-wrap">
               <strong>Diagnóstico.</strong>
