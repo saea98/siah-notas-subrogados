@@ -72,8 +72,9 @@ function notifyInfo(description: string, title = "Información") {
   showAlert("info", description, title);
 }
 
-/** UTextarea root es inline-flex por defecto; forzar ancho completo en notas. */
+/** UTextarea / UInput root es inline-flex por defecto; forzar ancho completo en notas. */
 const notaTextareaUi = { root: "relative flex w-full items-start" };
+const notaInputUi = { root: "relative inline-flex items-center w-full" };
 const notaFieldUi = { root: "w-full", container: "w-full mt-1" };
 
 const props = withDefaults(
@@ -92,8 +93,22 @@ const props = withDefaults(
     embedded?: boolean;
     /** Módulo inicial / forzado desde el host (Accesos rápidos). */
     initialModule?: "agenda" | "asignar" | "consulta" | null;
+    /**
+     * El host lo incrementa en cada clic de Accesos rápidos.
+     * Permite volver a Agenda aunque el host ya tuviera `initialModule="agenda"`.
+     */
+    moduleNonce?: number;
+    /** Host: Spatie interconsulta_atencion_medica. */
+    puedeVerInterconsultas?: boolean;
   }>(),
-  { apiPrefix: "", showModuleNav: true, embedded: false, initialModule: null },
+  {
+    apiPrefix: "",
+    showModuleNav: true,
+    embedded: false,
+    initialModule: null,
+    moduleNonce: 0,
+    puedeVerInterconsultas: true,
+  },
 );
 
 const emit = defineEmits<{
@@ -137,6 +152,8 @@ const emit = defineEmits<{
   ];
   /** Host abre la bandeja de interconsultas. */
   openInterconsultas: [];
+  /** Sincroniza Accesos rápidos del host con el tab interno (agenda / asignar / consulta). */
+  "update:module": [module: "agenda" | "asignar" | "consulta"];
   /** Notifica al host el folio activo y si la nota ya está grabada. */
   consultaGuardada: [payload: { hosi_folio: number; saved: boolean }];
 }>();
@@ -214,6 +231,8 @@ const asignando = ref(false);
 const pacienteBuscado = ref(false);
 const citasPaciente = ref<Record<string, unknown>[]>([]);
 const asignarOkFolio = ref("");
+const otraCitaOpen = ref(false);
+const otraCitaFolio = ref("");
 const buscarHint = ref("Ingrese los datos del paciente para buscarlo en el sistema.");
 const agendaAsignarPage = ref(1);
 const AGENDA_ASIGNAR_PAGE_SIZE = 10;
@@ -270,14 +289,19 @@ const sidebarNavAll = [
 ] as const;
 
 const sidebarNav = computed(() =>
-  esRecepcionista.value
-    ? sidebarNavAll.filter((n) => n.id !== "consulta")
-    : [...sidebarNavAll],
+  sidebarNavAll.filter((n) => {
+    if (n.id === "consulta" && esRecepcionista.value) return false;
+    if (n.id === "interconsultas" && !props.puedeVerInterconsultas) return false;
+    return true;
+  }),
 );
 
 function onSidebarNavClick(nav: (typeof sidebarNavAll)[number]) {
   if (nav.kind === "host") {
-    if (nav.id === "interconsultas") emit("openInterconsultas");
+    if (nav.id === "interconsultas") {
+      if (!props.puedeVerInterconsultas) return;
+      emit("openInterconsultas");
+    }
     return;
   }
   tab.value = nav.id as typeof tab.value;
@@ -357,11 +381,26 @@ const procQ = ref("");
 const procPendiente = ref<{ clave: string; descripcion: string } | null>(null);
 const dxQ = ref("");
 const dxPendiente = ref<{ clave: string; descripcion: string } | null>(null);
+const motivoQ = ref("");
+const motivoPendiente = ref<{ clave: string; descripcion: string } | null>(null);
 
 function onPickCieMotivo(hit: { clave: string; descripcion: string }) {
   if (notaBloqueada.value) return;
+  motivoPendiente.value = {
+    clave: hit.clave.slice(0, 5).toUpperCase(),
+    descripcion: hit.descripcion,
+  };
+  motivoQ.value = [hit.clave, hit.descripcion].filter(Boolean).join(" — ");
+}
+
+function agregarMotivoConsulta() {
+  if (notaBloqueada.value) return;
+  const hit = motivoPendiente.value;
+  if (!hit) return;
   consulta.motivoCie10 = hit.clave.slice(0, 5).toUpperCase();
-  if (!consulta.motivoConsulta.trim()) consulta.motivoConsulta = hit.descripcion;
+  consulta.motivoConsulta = hit.descripcion;
+  motivoPendiente.value = null;
+  motivoQ.value = "";
 }
 
 function setTipoConsulta(primeraVez: boolean, motivo?: string) {
@@ -729,6 +768,50 @@ function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergi
   syncCronicosEnAnalisis();
 }
 
+type SindromeKey = "diabetes" | "hipertension" | "obesidad" | "alergias";
+
+const sindromesUi = computed(() => {
+  const locked = notaBloqueada.value;
+  return [
+    {
+      key: "diabetes" as SindromeKey,
+      label: "Diabetes",
+      icon: "i-lucide-droplets",
+      on: notaCronica.diabetes === "positivo",
+      badge: notaCronica.diabetes === "positivo" ? "REGISTRADA" : "NO REGISTRADA",
+      clickable: !locked && notaCronica.diabetes !== "positivo",
+      title: "Pulsa para registrar diabetes",
+    },
+    {
+      key: "hipertension" as SindromeKey,
+      label: "Hipertensión",
+      icon: "i-lucide-heart-pulse",
+      on: notaCronica.hipertension === "positivo",
+      badge: notaCronica.hipertension === "positivo" ? "REGISTRADA" : "NO REGISTRADA",
+      clickable: !locked && notaCronica.hipertension !== "positivo",
+      title: "Pulsa para registrar hipertensión",
+    },
+    {
+      key: "obesidad" as SindromeKey,
+      label: "Obesidad",
+      icon: "i-lucide-scale",
+      on: notaCronica.obesidad === "positivo",
+      badge: notaCronica.obesidad === "positivo" ? "REGISTRADA" : "NO REGISTRADA",
+      clickable: false,
+      title: "Se registra con los signos vitales cuando el IMC es 25 o mayor.",
+    },
+    {
+      key: "alergias" as SindromeKey,
+      label: "Alergias",
+      icon: "i-lucide-shield-alert",
+      on: notaCronica.alergias === "positivo",
+      badge: notaCronica.alergias === "positivo" ? "REGISTRADAS" : "NO REGISTRADAS",
+      clickable: !locked,
+      title: "Pulsa para registrar o quitar alergias",
+    },
+  ];
+});
+
 async function confirmarAltaCenso() {
   const campo = censoAltaCampo.value;
   if (!campo || !citaCtx.ficha) return;
@@ -802,6 +885,7 @@ const consultaPhotoFailed = ref(false);
 const consultaPhotoSrc = ref("");
 const consultaPhotoError = ref("");
 const consultaLoadedFolio = ref(0);
+let consultaContextSeq = 0;
 
 const signos = reactive({
   hosi_folio: 0,
@@ -950,8 +1034,10 @@ function formatSignosResumenLinea(s: {
   ].join(" ");
 }
 
-// Solo el bloque generado (hasta SATURACION O2). El plan escrito antes o después sí cuenta.
-const SIGNOS_PLAN_RE = /^SIGNOS VITALES:\s*PULSO:.*SATURACION O2:\s*\S+\s*%/im;
+// Bloque canónico (campos fijos). No usar [^\n]*: el resumen va en una sola línea
+// y, al partirse visualmente, el texto del médico queda en medio y se tragaba.
+const SIGNOS_PLAN_CANON_RE =
+  /^SIGNOS VITALES:\s*PULSO:\s*\S+\s+RESPIRACION:\s*\S+\s+TENSION ARTERIAL:\s*\S+\s+mmHg(?:\s*\([^)]+\))?\s+TEMPERATURA:\s*\S+\s+°C\s+PESO:\s*\S+\s+KG\s+ESTATURA:\s*\S+\s+M\s+IMC:\s*\S+\s+KG\/M[²2]?(?:\s*\([^)]+\))?\s+PERIMETRO ABDOMINAL:\s*\S+\s+CMS\s+SATURACION O2:\s*\S+\s*%/im;
 
 function bloquePlanAutomatico(): string {
   if (
@@ -963,22 +1049,44 @@ function bloquePlanAutomatico(): string {
   return formatSignosResumenLinea(ultimosSignos.value);
 }
 
+/** Texto del plan que sí es del médico (sin el resumen automático de signos). */
+function planTextoPropio(text: string, block = ""): string {
+  let t = String(text || "");
+  const b = String(block || "").trim();
+  if (b && t.includes(b)) {
+    return t.split(b).join(" ").replace(/\s+/g, " ").trim();
+  }
+  const canon = t.match(SIGNOS_PLAN_CANON_RE);
+  if (canon && canon.index != null) {
+    return `${t.slice(0, canon.index)} ${t.slice(canon.index + canon[0].length)}`
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  if (!/SIGNOS VITALES:/i.test(t)) return t.trim();
+  let rest = t.replace(/SIGNOS VITALES:/gi, " ");
+  rest = rest.replace(
+    /\b(PULSO|RESPIRACION|TENSION ARTERIAL|TEMPERATURA|PESO|ESTATURA|IMC|PERIMETRO ABDOMINAL|SATURACION O2)\s*:/gi,
+    " ",
+  );
+  rest = rest.replace(/\bmmHg\b/gi, " ");
+  rest = rest.replace(/°C/g, " ");
+  rest = rest.replace(/KG\/M[²2]?/gi, " ");
+  rest = rest.replace(/\bCMS\b/gi, " ");
+  rest = rest.replace(/\bKG\b/gi, " ");
+  rest = rest.replace(/%/g, " ");
+  rest = rest.replace(/\([^)]*\)/g, " ");
+  rest = rest.replace(/\b[\d.,/—\-]+\b/g, " ");
+  rest = rest.replace(/(^|\s)M(\s|$)/g, " ");
+  return rest.replace(/\s+/g, " ").trim();
+}
+
 function syncSignosEnPlan(resumen?: string) {
   if (notaBloqueada.value) return;
   const block = (resumen ?? bloquePlanAutomatico()).trim();
-  let plan = (consulta.plan || "")
-    .replace(/CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ)/gi, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  if (SIGNOS_PLAN_RE.test(plan)) {
-    plan = plan.replace(SIGNOS_PLAN_RE, block).trim();
-  } else if (block) {
-    plan = plan ? `${block}\n${plan}` : block;
-  }
-  if (block && plan.startsWith(block) && !plan.slice(block.length).trim()) {
-    plan = `${block}\n`;
-  }
-  consulta.plan = plan.replace(/\n{3,}/g, "\n\n").trimEnd();
+  const propio = planTextoPropio(consulta.plan || "", block);
+  if (block && propio) consulta.plan = `${block}\n${propio}`;
+  else if (block) consulta.plan = `${block}\n`;
+  else consulta.plan = propio;
 }
 
 const signosTensionClasificacion = computed(() =>
@@ -1022,8 +1130,8 @@ const consultaTieneSignos = computed(() => {
   return folio > 0 && folio === Number(citaCtx.hosi_folio || 0);
 });
 
-/** Solo la nota grabada bloquea captura; signos previos del folio se pueden actualizar. */
-const signosCapturaBloqueada = computed(() => notaBloqueada.value);
+/** Nota grabada o signos ya guardados en este folio: no se vuelven a capturar. */
+const signosCapturaBloqueada = computed(() => notaBloqueada.value || consultaTieneSignos.value);
 
 const consultaBloqueadaSinSignos = computed(
   () =>
@@ -1195,7 +1303,6 @@ const PRECARGA_SINTOMAS_RE =
   /SE TRATA DE\s+.+?OBESIDAD\/SOBREPESO\s+(?:NO\s+)?REGISTRADO\.?\s*/i;
 const PRECARGA_ANALISIS_RE =
   /(?:PACIENTE REFIERE SER ALERGICO A[^\n]*|ALERGIAS NO REGISTRADAS)\s*/i;
-const PRECARGA_PLAN_RE = /CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ)/gi;
 const MOTIVO_MARK_RE = /\[\[MC:[^\]]*\]\]/g;
 const ANTECEDENTES_RE = /ANTECEDENTES CRONICOS:[\s\S]*?(?:\n\n|$)/i;
 
@@ -1204,8 +1311,30 @@ function soapLen(text: string, campo: "sintomas" | "objetivo" | "analisis" | "pl
   t = t.replace(MOTIVO_MARK_RE, "").replace(ANTECEDENTES_RE, "");
   if (campo === "sintomas") t = t.replace(PRECARGA_SINTOMAS_RE, "");
   if (campo === "analisis") t = t.replace(PRECARGA_ANALISIS_RE, "");
-  if (campo === "plan") t = t.replace(SIGNOS_PLAN_RE, "").replace(PRECARGA_PLAN_RE, "");
+  if (campo === "plan") {
+    t = planTextoPropio(t, bloquePlanAutomatico());
+  }
   return t.trim().length;
+}
+
+function soapBoxIncomplete(n: number): boolean {
+  return !notaBloqueada.value && n < SOAP_MIN_CHARS;
+}
+
+function soapBoxUi(n: number) {
+  return {
+    root: "relative flex w-full items-start",
+    base: soapBoxIncomplete(n) ? "ring-2 ring-inset ring-[#c53030]" : "",
+  };
+}
+
+function clasifTone(clas: string): "ok" | "warn" | "bad" | "muted" {
+  const c = (clas || "").toUpperCase();
+  if (!c) return "muted";
+  if (c.includes("OBESIDAD") || c === "HIPERTENSO" || c.includes("HIPOTENSION")) return "bad";
+  if (c.includes("SOBREPESO") || c.includes("PREHIPERTENSO") || c.includes("BAJO")) return "warn";
+  if (c.includes("NORMAL")) return "ok";
+  return "muted";
 }
 
 const soapLens = computed(() => ({
@@ -1258,15 +1387,18 @@ function soapHint(n: number): string {
 }
 
 async function loadRecetasConsulta() {
+  const folio = Number(citaCtx.hosi_folio || 0);
   recetasConsulta.value = [];
-  if (!citaCtx.hosi_folio) return;
+  if (!folio) return;
   try {
     const data = await post<{ rows?: Record<string, unknown>[] }>("/sub/recetas/list", {
       ...props.session,
-      hosi_folio: citaCtx.hosi_folio,
+      hosi_folio: folio,
     });
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     recetasConsulta.value = data.rows || [];
   } catch {
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     recetasConsulta.value = [];
   }
 }
@@ -1311,18 +1443,22 @@ function limpiarSignosCaptura() {
 }
 
 async function loadUltimosSignos() {
-  if (!signos.hosi_folio && !citaCtx.ficha) {
+  const folio = Number(signos.hosi_folio || citaCtx.hosi_folio || 0);
+  const ficha = String(citaCtx.ficha || "").trim();
+  if (!folio && !ficha) {
     ultimosSignos.value = null;
     return;
   }
   try {
     const res = await post<{ rows?: SignosRow[] }>("/sub/atmed/signos/ultimos", {
       ...props.session,
-      hosi_folio: signos.hosi_folio || undefined,
-      ficha: citaCtx.ficha || undefined,
+      hosi_folio: folio || undefined,
+      ficha: ficha || undefined,
     });
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     ultimosSignos.value = res.rows?.[0] ?? null;
   } catch {
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     ultimosSignos.value = null;
   }
 }
@@ -1357,7 +1493,7 @@ function openServiciosModal() {
 
 function copiarUltimosSignos() {
   const u = ultimosSignos.value;
-  if (!u || signosCapturaBloqueada.value) return;
+  if (!u) return;
   signos.pulso = String(u.pulso ?? "");
   signos.respiracion = String(u.respiracion ?? "");
   signos.tension_sis = String(u.tension_sis ?? "");
@@ -1527,10 +1663,8 @@ const historialFiltrado = computed(() => {
   const q = historialBusqueda.value.trim().toLowerCase();
   if (!q) return historialNotas.value;
   return historialNotas.value.filter((h) =>
-    [h.hosi_folio, h.cond_fechcon, h.unitrab, h.hospital]
-      .map((v) => String(v ?? "").toLowerCase())
-      .join(" ")
-      .includes(q),
+    lineaHistorialMain(h).toLowerCase().includes(q)
+    || String(h.hosi_folio ?? "").toLowerCase().includes(q),
   );
 });
 
@@ -1792,6 +1926,24 @@ function calcEdad(fecnac: string): string {
   const m = today.getMonth() - d.getMonth();
   if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age -= 1;
   return age >= 0 ? String(age) : "";
+}
+
+/** Muestra "39 años" aunque el origen ya traiga "AÑOS"/"años". */
+function edadLabel(edad: unknown): string {
+  const raw = String(edad ?? "").trim();
+  if (!raw) return "";
+  const n = raw.replace(/\s*(años|anios|año|anio)\s*$/i, "").trim();
+  return n ? `${n} años` : "";
+}
+
+/** F → Femenino, M → Masculino. */
+function sexoLabel(sexo: unknown): string {
+  const raw = String(sexo ?? "").trim();
+  if (!raw) return "";
+  const u = raw.toUpperCase();
+  if (u === "F" || u.startsWith("FEM") || u.startsWith("MUJ")) return "Femenino";
+  if (u === "M" || u.startsWith("MASC") || u.startsWith("HOM")) return "Masculino";
+  return raw;
 }
 
 function formatHora(hhmm: unknown): string {
@@ -2077,13 +2229,47 @@ function formatFechaNota(value: unknown): string {
 }
 
 function formatHoraNota(value: unknown): string {
-  const n = Number(value);
-  if (Number.isFinite(n) && n > 0 && n < 2400) {
+  if (value == null || value === "") return "—";
+  const raw = String(value).trim();
+  const hm = raw.match(/(?:^|[T\s])(\d{1,2}):(\d{2})/);
+  if (hm) return `${hm[1].padStart(2, "0")}:${hm[2]}`;
+  if (/^\d{1,2}:\d{2}/.test(raw)) return raw.slice(0, 5);
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 0 && n < 2400 && !raw.includes(":")) {
     return `${String(Math.floor(n / 100)).padStart(2, "0")}:${String(n % 100).padStart(2, "0")}`;
   }
-  const raw = String(value || "");
   if (raw.includes("T") || raw.includes(" ")) return raw.slice(11, 16) || "—";
   return "—";
+}
+
+function horaHistorial(row: Record<string, unknown>): string {
+  const fromField = formatHoraNota(row.conn_horaini ?? row.hora ?? row.hora_consulta);
+  if (fromField !== "—") return fromField;
+  return formatHoraNota(row.cond_fechcon);
+}
+
+function unidadHistorial(row: Record<string, unknown>): string {
+  return String(row.unidad_medica || row.hospital || "").trim() || "—";
+}
+
+function diagnosticoHistorial(row: Record<string, unknown>): string {
+  const cie = String(row.diai_clacie1 || row.cie2 || "").trim();
+  const dx = String(row.diagnostico || row.diagnosticoConsulta || "").trim();
+  if (cie && dx) return `${cie} — ${dx}`;
+  return cie || dx || "—";
+}
+
+/** Misma línea que el historial médico en main / ECE. */
+function lineaHistorialMain(row: Record<string, unknown> | null | undefined): string {
+  if (!row) return "—";
+  const parts = [
+    formatFechaNota(row.cond_fechcon || row.fecha),
+    horaHistorial(row),
+    unidadHistorial(row),
+    String(row.especialidad || row.servicio || "").trim() || "—",
+    diagnosticoHistorial(row),
+  ].filter((p) => p && p !== "—");
+  return parts.join(" · ") || "—";
 }
 
 function formatCitaHoraShort(hhmm: unknown): string {
@@ -2273,6 +2459,15 @@ function partialClearAsignar() {
   beneficiariosFicha.value = [];
   pacienteBuscado.value = false;
   buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
+}
+
+function confirmarOtraCita(registrarOtra: boolean) {
+  otraCitaOpen.value = false;
+  if (registrarOtra) {
+    asignarOkFolio.value = "";
+    return;
+  }
+  tab.value = "agenda";
 }
 
 async function loadAgendaAsignar() {
@@ -2521,13 +2716,12 @@ async function doAsignar() {
     });
     const folio = res.record?.hosi_folio != null ? String(res.record.hosi_folio) : "";
     asignarOkFolio.value = folio;
-    okMsg.value = folio
-      ? `Cita registrada. Folio de cita médica: ${folio}`
-      : res.mensaje || "Cita registrada.";
+    otraCitaFolio.value = folio;
+    otraCitaOpen.value = true;
     partialClearAsignar();
     fecha.value = asignar.fecha;
-    await load();
-    await loadHoras();
+    void load();
+    void loadHoras();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error al asignar";
   } finally {
@@ -2536,8 +2730,69 @@ async function doAsignar() {
   }
 }
 
+/** Limpia SOAP / crónicos / signos / historial sin tocar la cita seleccionada. */
+function resetConsultaCaptura() {
+  consultaOkLocal.value = false;
+  consulta.sintomas = "";
+  consulta.objetivo = "";
+  consulta.analisis = "";
+  consulta.plan = "";
+  consulta.diai_clacie1 = "";
+  consulta.diai_clacie2 = "";
+  consulta.diai_clacie3 = "";
+  consulta.diai_clacie4 = "";
+  consulta.diai_clacie5 = "";
+  consulta.motivoCie10 = "";
+  consulta.motivoConsulta = "";
+  consulta.diagnosticoTexto = "";
+  consulta.diagnosticoTexto2 = "";
+  consulta.diagnosticoTexto3 = "";
+  consulta.diagnosticoTexto4 = "";
+  consulta.diagnosticoTexto5 = "";
+  consulta.enfermedadPrimeraVez = false;
+  consulta.enfermedadSub = false;
+  consulta.conn_tipocon = "";
+  tipoconMotivo.value = "";
+  dxSlotsVisible.value = 1;
+  dxQ.value = "";
+  dxPendiente.value = null;
+  motivoQ.value = "";
+  motivoPendiente.value = null;
+  consultaLoadedFolio.value = 0;
+  notaCronica.diabetes = "negativo";
+  notaCronica.diabetesTipo = "";
+  notaCronica.hipertension = "negativo";
+  notaCronica.obesidad = "negativo";
+  notaCronica.alergias = "negativo";
+  notaCronica.alergiasDetalle = "";
+  alergiasLista.value = [];
+  alergiaNueva.value = "";
+  syncingAlergiaCatalogoSel.value = true;
+  alergiaCatalogoSel.value = [];
+  syncingAlergiaCatalogoSel.value = false;
+  alergiaOtroTexto.value = "";
+  antecedentesVisitados.value = false;
+  procedimientosSel.value = [];
+  procQ.value = "";
+  procPendiente.value = null;
+  censoBase.diabetes = false;
+  censoBase.hipertension = false;
+  censoBase.obesidad = false;
+  historialNotas.value = [];
+  historialNota.value = null;
+  historialModalOpen.value = false;
+  recetasConsulta.value = [];
+  ultimosSignos.value = null;
+  limpiarSignosCaptura();
+  citaCtx.edad = "";
+  citaCtx.sexo = "";
+  citaCtx.sangre = "";
+  consultaUiTab.value = "vitals";
+}
+
 function selectCita(row: Record<string, unknown>) {
   const folio = Number(row.hosi_folio);
+  const folioChanged = Number(consultaLoadedFolio.value || 0) !== folio;
   consulta.hosi_folio = folio;
   signos.hosi_folio = folio;
   citaCtx.hosi_folio = folio;
@@ -2553,9 +2808,7 @@ function selectCita(row: Record<string, unknown>) {
   citaCtx.horaTermino = 0;
   citaCtx.esps_espserv = Number(row.esps_espserv || 0);
   citaCtx.unitrab_nota = props.session.unitrab;
-  if (row.derd_fecnac) {
-    citaCtx.fecnac = String(row.derd_fecnac).slice(0, 10);
-  }
+  citaCtx.fecnac = row.derd_fecnac ? String(row.derd_fecnac).slice(0, 10) : "";
   const flag = String(row.requiere_signos || "").toUpperCase();
   if (flag === "N" || flag === "S") {
     citaCtx.requiere_signos = flag;
@@ -2566,45 +2819,23 @@ function selectCita(row: Record<string, unknown>) {
   // Estatus 4 = atendida / nota grabada (legacy).
   notaBloqueada.value = Number(row.cits_estatus) === 4;
   consultaOkLocal.value = notaBloqueada.value;
-  if (consultaLoadedFolio.value !== folio) {
-    // Evitar arrastrar dx / procedimientos / SOAP de otra consulta.
-    consulta.sintomas = "";
-    consulta.objetivo = "";
-    consulta.analisis = "";
-    consulta.plan = "";
-    consulta.diai_clacie1 = "";
-    consulta.diai_clacie2 = "";
-    consulta.diai_clacie3 = "";
-    consulta.diai_clacie4 = "";
-    consulta.diai_clacie5 = "";
-    consulta.motivoCie10 = "";
-    consulta.motivoConsulta = "";
-    consulta.diagnosticoTexto = "";
-    consulta.diagnosticoTexto2 = "";
-    consulta.diagnosticoTexto3 = "";
-    consulta.diagnosticoTexto4 = "";
-    consulta.diagnosticoTexto5 = "";
-    consulta.enfermedadPrimeraVez = false;
-    consulta.enfermedadSub = false;
-    consulta.conn_tipocon = "";
-    tipoconMotivo.value = "";
-    dxSlotsVisible.value = 1;
-    dxQ.value = "";
-    dxPendiente.value = null;
-    procedimientosSel.value = [];
-    procQ.value = "";
-    procPendiente.value = null;
-    consultaLoadedFolio.value = 0;
+  if (folioChanged) {
+    consultaContextSeq += 1;
+    resetConsultaCaptura();
+    consulta.hosi_folio = folio;
+    signos.hosi_folio = folio;
   }
 }
 
 async function loadNotaGrabada() {
-  if (!citaCtx.hosi_folio) return;
+  const folio = Number(citaCtx.hosi_folio || 0);
+  if (!folio) return;
   try {
     const res = await post<{ record: Record<string, unknown> }>("/sub/atmed/consulta/detalle", {
       ...props.session,
-      hosi_folio: citaCtx.hosi_folio,
+      hosi_folio: folio,
     });
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     const r = res.record || {};
     if (!r.grabada) {
       if (!notaBloqueada.value) return;
@@ -2680,39 +2911,51 @@ async function loadNotaGrabada() {
 let consultaContextInflight: Promise<void> | null = null;
 let consultaContextInflightKey = "";
 
+function consultaContextStale(seq: number, folio: number): boolean {
+  return seq !== consultaContextSeq || Number(citaCtx.hosi_folio || 0) !== folio;
+}
+
 async function loadConsultaContext(force = false) {
   if (!citaCtx.ficha) return;
   if (!force && consultaLoadedFolio.value === citaCtx.hosi_folio && citaCtx.hosi_folio) return;
 
-  const key = [
-    Number(citaCtx.hosi_folio || 0),
-    String(citaCtx.ficha || "").trim(),
-    String(citaCtx.codigo || "00").trim(),
-    Number(citaCtx.empresa || 0),
-  ].join("|");
+  const folio = Number(citaCtx.hosi_folio || 0);
+  const ficha = String(citaCtx.ficha || "").trim();
+  const codigo = String(citaCtx.codigo || "00").trim();
+  const empresa = Number(citaCtx.empresa || 0);
+  const esps = citaCtx.esps_espserv || undefined;
+  const key = [folio, ficha, codigo, empresa].join("|");
 
   if (consultaContextInflight && consultaContextInflightKey === key) {
     return consultaContextInflight;
   }
 
+  const seq = ++consultaContextSeq;
+
   const run = (async () => {
     consultaPhotoFailed.value = false;
+    if (Number(consultaLoadedFolio.value || 0) !== folio) {
+      resetConsultaCaptura();
+      consulta.hosi_folio = folio;
+      signos.hosi_folio = folio;
+    }
     try {
       const [det, pre] = await Promise.all([
         post<{ ok: boolean; record: Record<string, unknown> }>("/derech/detail", {
           ...props.session,
-          ficha: citaCtx.ficha.trim(),
-          codigo: (citaCtx.codigo || "00").trim(),
-          empresa: citaCtx.empresa,
+          ficha,
+          codigo,
+          empresa,
         }),
         post<{ success?: boolean; data?: Record<string, unknown> }>("/ece/nota/ce/precarga", {
           ...props.session,
-          ficha: citaCtx.ficha.trim(),
-          idCodificacion: (citaCtx.codigo || "00").trim(),
-          idEmpresa: citaCtx.empresa,
-          idEspecialidad: citaCtx.esps_espserv || undefined,
+          ficha,
+          idCodificacion: codigo,
+          idEmpresa: empresa,
+          idEspecialidad: esps,
         }).catch(() => ({ data: {} })),
       ]);
+      if (consultaContextStale(seq, folio)) return;
 
       const r = det.record || {};
       const nombrePadron = [r.derc_nombre, r.derc_appaterno, r.derc_apmaterno]
@@ -2722,9 +2965,8 @@ async function loadConsultaContext(force = false) {
       if (nombrePadron) citaCtx.paciente = nombrePadron;
       citaCtx.procedencia = String(r.ders_locfor || citaCtx.procedencia || "");
       citaCtx.sexo = String(r.derc_sexo || citaCtx.sexo || "");
-      citaCtx.edad = calcEdad(String(r.derd_fecnac || ""))
-        ? `${calcEdad(String(r.derd_fecnac || ""))} AÑOS`
-        : citaCtx.edad;
+      const edadCalc = calcEdad(String(r.derd_fecnac || ""));
+      if (edadCalc) citaCtx.edad = edadCalc;
       if (r.derd_fecnac) citaCtx.fecnac = String(r.derd_fecnac).slice(0, 10);
       const tipoSangre = String(r.derc_tiposangre || r.tiposangre || r.derc_sangre || "").trim();
       const rh = String(r.derc_rh || r.rh || "").trim();
@@ -2736,11 +2978,16 @@ async function loadConsultaContext(force = false) {
       }
 
       const preData = pre.data || {};
-      if (preData.edad) citaCtx.edad = String(preData.edad);
+      if (preData.edad) {
+        const edadPre = String(preData.edad).replace(/\s*(años|anios|año|anio)\s*$/i, "").trim();
+        if (edadPre) citaCtx.edad = edadPre;
+      }
       if (preData.sexo) citaCtx.sexo = String(preData.sexo).startsWith("MASC") ? "M" : citaCtx.sexo;
 
       await loadNotaGrabada();
+      if (consultaContextStale(seq, folio)) return;
       await loadHistorialPaciente();
+      if (consultaContextStale(seq, folio)) return;
 
       if (!notaBloqueada.value) {
         consulta.sintomas = String(preData.sintomas || consulta.sintomas || "");
@@ -2776,22 +3023,27 @@ async function loadConsultaContext(force = false) {
       } else {
         antecedentesVisitados.value = true;
       }
-      consultaLoadedFolio.value = citaCtx.hosi_folio;
-      signos.hosi_folio = Number(citaCtx.hosi_folio || consulta.hosi_folio || 0);
+      consultaLoadedFolio.value = folio;
+      signos.hosi_folio = folio || Number(consulta.hosi_folio || 0);
       await loadUltimosSignos();
+      if (consultaContextStale(seq, folio)) return;
       if (consultaTieneSignos.value) {
         copiarUltimosSignos();
+      } else {
+        limpiarSignosCaptura();
       }
       if (!notaBloqueada.value) {
         syncSignosEnPlan(bloquePlanAutomatico());
       }
       await loadRecetasConsulta();
+      if (consultaContextStale(seq, folio)) return;
       // Host: habilitar/deshabilitar botón Solicitudes (Forma 11-5).
       emit("consultaGuardada", {
-        hosi_folio: Number(citaCtx.hosi_folio || 0),
+        hosi_folio: folio,
         saved: Boolean(notaBloqueada.value),
       });
     } catch (e) {
+      if (consultaContextStale(seq, folio)) return;
       error.value = e instanceof Error ? e.message : "Error cargando datos del paciente";
     }
   })();
@@ -2813,47 +3065,7 @@ function limpiarConsulta() {
     error.value = "La nota ya está grabada; no se puede limpiar ni modificar.";
     return;
   }
-  consultaOkLocal.value = false;
-  consulta.sintomas = "";
-  consulta.objetivo = "";
-  consulta.analisis = "";
-  consulta.plan = "";
-  consulta.diai_clacie1 = "";
-  consulta.diai_clacie2 = "";
-  consulta.diai_clacie3 = "";
-  consulta.diai_clacie4 = "";
-  consulta.diai_clacie5 = "";
-  consulta.motivoCie10 = "";
-  consulta.motivoConsulta = "";
-  consulta.diagnosticoTexto = "";
-  consulta.diagnosticoTexto2 = "";
-  consulta.diagnosticoTexto3 = "";
-  consulta.diagnosticoTexto4 = "";
-  consulta.diagnosticoTexto5 = "";
-  consulta.enfermedadPrimeraVez = false;
-  consulta.enfermedadSub = false;
-  consulta.conn_tipocon = "";
-  tipoconMotivo.value = "";
-  dxSlotsVisible.value = 1;
-  dxQ.value = "";
-  dxPendiente.value = null;
-  consultaLoadedFolio.value = 0;
-  notaCronica.diabetes = "negativo";
-  notaCronica.diabetesTipo = "";
-  notaCronica.hipertension = "negativo";
-  notaCronica.obesidad = "negativo";
-  notaCronica.alergias = "negativo";
-  notaCronica.alergiasDetalle = "";
-  alergiasLista.value = [];
-  alergiaNueva.value = "";
-  syncingAlergiaCatalogoSel.value = true;
-  alergiaCatalogoSel.value = [];
-  syncingAlergiaCatalogoSel.value = false;
-  alergiaOtroTexto.value = "";
-  antecedentesVisitados.value = false;
-  procedimientosSel.value = [];
-  procQ.value = "";
-  procPendiente.value = null;
+  resetConsultaCaptura();
 }
 
 function openExpedienteConsulta() {
@@ -2871,20 +3083,24 @@ function openExpedienteConsulta() {
 }
 
 async function loadHistorialPaciente() {
-  if (!citaCtx.ficha) {
+  const ficha = String(citaCtx.ficha || "").trim();
+  const folio = Number(citaCtx.hosi_folio || 0);
+  if (!ficha) {
     historialNotas.value = [];
     return;
   }
   try {
     const data = await post<{ rows: Record<string, unknown>[] }>("/sub/atmed/notas/historial", {
       ...props.session,
-      ficha: citaCtx.ficha,
+      ficha,
       codigo: citaCtx.codigo || "00",
       empresa: citaCtx.empresa || 0,
       limit: 10,
     });
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     historialNotas.value = (data.rows || []).slice(0, 10);
   } catch {
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     historialNotas.value = [];
   }
 }
@@ -3125,7 +3341,9 @@ async function doSignos() {
     return;
   }
   if (signosCapturaBloqueada.value) {
-    error.value = "La nota ya está grabada; no se pueden modificar los signos.";
+    error.value = notaBloqueada.value
+      ? "La nota ya está grabada; no se pueden modificar los signos."
+      : "Los signos vitales ya se guardaron en la nota; no se pueden volver a grabar.";
     return;
   }
   const required: [keyof typeof signos, string][] = [
@@ -3207,6 +3425,7 @@ watch(
 );
 
 watch(tab, async (t) => {
+  emit("update:module", t);
   if (t === "consulta" && !puedeClinica.value) {
     tab.value = "agenda";
     error.value = "Su rol no tiene acceso a la consulta clínica.";
@@ -3228,8 +3447,8 @@ watch(tab, async (t) => {
 });
 
 watch(
-  () => props.initialModule,
-  (mod) => {
+  () => [props.initialModule, props.moduleNonce] as const,
+  ([mod]) => {
     if (!mod) return;
     if (mod === "consulta" && !puedeClinica.value) return;
     tab.value = mod;
@@ -3247,11 +3466,6 @@ watch(okMsg, (msg) => {
   if (!msg) return;
   notifySuccess(msg);
   okMsg.value = "";
-});
-
-watch(asignarOkFolio, (folio) => {
-  if (!folio) return;
-  notifySuccess(`Cita registrada. Folio de cita médica: ${folio}`, "Cita grabada");
 });
 
 onMounted(async () => {
@@ -3875,7 +4089,7 @@ onMounted(async () => {
                 <div>
                   <small>Paciente</small>
                   <strong>
-                    {{ paciente.nombre || "—" }}<span v-if="paciente.edad"> · {{ paciente.edad }} años</span>
+                    {{ paciente.nombre || "—" }}<span v-if="paciente.edad"> · {{ edadLabel(paciente.edad) }}</span>
                   </strong>
                 </div>
                 <div>
@@ -3944,8 +4158,8 @@ onMounted(async () => {
                     Ficha <b>{{ citaCtx.ficha || "—" }}</b>
                     · Código {{ citaCtx.codigo || "—" }}
                     · Empresa {{ citaCtx.empresa ?? "—" }}
-                    · {{ citaCtx.edad ? `${citaCtx.edad} años` : "—" }}
-                    · {{ citaCtx.sexo || "—" }}
+                    · {{ edadLabel(citaCtx.edad) || "—" }}
+                    · {{ sexoLabel(citaCtx.sexo) || "—" }}
                   </div>
                 </div>
               </div>
@@ -4039,11 +4253,11 @@ onMounted(async () => {
                     </div>
                     <div>
                       <small>Edad</small>
-                      <b>{{ citaCtx.edad || "—" }}</b>
+                      <b>{{ edadLabel(citaCtx.edad) || "—" }}</b>
                     </div>
                     <div>
                       <small>Sexo</small>
-                      <b>{{ citaCtx.sexo || "—" }}</b>
+                      <b>{{ sexoLabel(citaCtx.sexo) || "—" }}</b>
                     </div>
                     <div>
                       <small>Sangre</small>
@@ -4175,7 +4389,7 @@ onMounted(async () => {
               </div>
 
               <div v-show="consultaUiTab === 'vitals'" class="siah-tab-panel" role="tabpanel">
-            <AtmedSectionCard title="Signos vitales">
+            <AtmedSectionCard title="Signos vitales" dense>
               <div class="siah-vital-columns">
                 <div class="siah-vital-column">
                   <div class="siah-vital-head">
@@ -4226,41 +4440,55 @@ onMounted(async () => {
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Cardiovascular</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Pulso *<div class="siah-input-unit"><input v-model="signos.pulso" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="Pulso"><span>lpm</span></div></label>
-                        <label class="siah-field">TA sistólica *<div class="siah-input-unit"><input v-model="signos.tension_sis" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="TA sistólica"><span>mmHg</span></div></label>
-                        <label class="siah-field">TA diastólica *<div class="siah-input-unit"><input v-model="signos.tension_dia" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="TA diastólica"><span>mmHg</span></div></label>
+                        <label class="siah-field">Pulso *<div class="siah-input-unit"><input v-model="signos.pulso" inputmode="numeric" placeholder="30–200" :disabled="signosCapturaBloqueada" aria-label="Pulso"><span>lpm</span></div></label>
+                        <label class="siah-field">TA sistólica *<div class="siah-input-unit"><input v-model="signos.tension_sis" inputmode="numeric" placeholder="0–350" :disabled="signosCapturaBloqueada" aria-label="TA sistólica"><span>mmHg</span></div></label>
+                        <label class="siah-field">TA diastólica *<div class="siah-input-unit"><input v-model="signos.tension_dia" inputmode="numeric" placeholder="0–200" :disabled="signosCapturaBloqueada" aria-label="TA diastólica"><span>mmHg</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Respiratorio</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Frecuencia respiratoria *<div class="siah-input-unit"><input v-model="signos.respiracion" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="Frecuencia respiratoria"><span>rpm</span></div></label>
+                        <label class="siah-field">Frecuencia respiratoria *<div class="siah-input-unit"><input v-model="signos.respiracion" inputmode="numeric" placeholder="5–100" :disabled="signosCapturaBloqueada" aria-label="Frecuencia respiratoria"><span>rpm</span></div></label>
                         <label class="siah-field">Saturación de O₂<div class="siah-input-unit"><input v-model="signos.saturacion" inputmode="numeric" placeholder="50–100" :disabled="signosCapturaBloqueada" aria-label="Saturación de O₂"><span>%</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Temperatura</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Temperatura *<div class="siah-input-unit"><input v-model="signos.temperatura" inputmode="decimal" :disabled="signosCapturaBloqueada" aria-label="Temperatura"><span>°C</span></div></label>
+                        <label class="siah-field">Temperatura *<div class="siah-input-unit"><input v-model="signos.temperatura" inputmode="decimal" placeholder="15–50" :disabled="signosCapturaBloqueada" aria-label="Temperatura"><span>°C</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Antropometría</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Peso *<div class="siah-input-unit"><input v-model="signos.peso" inputmode="decimal" :disabled="signosCapturaBloqueada" aria-label="Peso"><span>kg</span></div></label>
-                        <label class="siah-field">Estatura *<div class="siah-input-unit"><input v-model="signos.estatura" inputmode="decimal" :disabled="signosCapturaBloqueada" aria-label="Estatura"><span>m</span></div></label>
-                        <label class="siah-field">Perímetro abdominal<div class="siah-input-unit"><input v-model="signos.abdominal" inputmode="numeric" :disabled="signosCapturaBloqueada" aria-label="Perímetro abdominal"><span>cm</span></div></label>
+                        <label class="siah-field">Peso *<div class="siah-input-unit"><input v-model="signos.peso" inputmode="decimal" placeholder="0.5–250" :disabled="signosCapturaBloqueada" aria-label="Peso"><span>kg</span></div></label>
+                        <label class="siah-field">Estatura *<div class="siah-input-unit"><input v-model="signos.estatura" inputmode="decimal" placeholder="0.1–2.5" :disabled="signosCapturaBloqueada" aria-label="Estatura"><span>m</span></div></label>
+                        <label class="siah-field">Perímetro abdominal<div class="siah-input-unit"><input v-model="signos.abdominal" inputmode="numeric" placeholder="15–500" :disabled="signosCapturaBloqueada" aria-label="Perímetro abdominal"><span>cm</span></div></label>
                       </div>
                     </div>
-                    <p v-if="signosImc != null" class="siah-helper">
-                      IMC: <b>{{ signosImc }}</b>
-                      <span v-if="signosClasificacion"> · {{ signosClasificacion }}</span>
-                      <span v-if="signosTensionClasificacion"> · TA {{ signosTensionClasificacion }}</span>
-                    </p>
-                    <p v-if="consultaTieneSignos && !notaBloqueada" class="siah-helper">
-                      Ya hay signos de esta consulta; puede actualizarlos.
-                    </p>
-                    <p v-else-if="notaBloqueada" class="siah-helper">
+                    <div v-if="signosImc != null" class="siah-imc-banner" role="status">
+                      <div class="siah-imc-chip" :class="`siah-imc-chip--${clasifTone(signosClasificacion)}`">
+                        <small>IMC</small>
+                        <b>{{ signosImc }}</b>
+                      </div>
+                      <div
+                        v-if="signosClasificacion"
+                        class="siah-imc-chip"
+                        :class="`siah-imc-chip--${clasifTone(signosClasificacion)}`"
+                      >
+                        <small>Clasificación</small>
+                        <b>{{ signosClasificacion }}</b>
+                      </div>
+                      <div
+                        v-if="signosTensionClasificacion"
+                        class="siah-imc-chip"
+                        :class="`siah-imc-chip--${clasifTone(signosTensionClasificacion)}`"
+                      >
+                        <small>Tensión arterial</small>
+                        <b>TA {{ signosTensionClasificacion }}</b>
+                      </div>
+                    </div>
+                    <p v-if="notaBloqueada" class="siah-helper">
                       Nota grabada: los signos vitales quedan en solo lectura.
                     </p>
                     <div class="siah-vital-toolbar">
@@ -4280,11 +4508,9 @@ onMounted(async () => {
                         @click="doSignos"
                       >
                         {{
-                          notaBloqueada
+                          signosCapturaBloqueada
                             ? "Signos bloqueados"
-                            : consultaTieneSignos
-                              ? "Actualizar signos vitales"
-                              : "Grabar signos vitales"
+                            : "Grabar signos vitales"
                         }}
                       </button>
                     </div>
@@ -4293,61 +4519,38 @@ onMounted(async () => {
               </div>
             </AtmedSectionCard>
 
-            <AtmedSectionCard title="Síndrome metabólico">
+            <AtmedSectionCard title="Síndrome metabólico" dense>
               <p class="siah-helper">
-                Antecedentes de la consulta. Pulsa una etiqueta para cambiar el registro.
-                La obesidad se registra con los signos vitales cuando el IMC es 25 o mayor.
+                Antecedentes de la consulta. Pulsa una tarjeta para cambiar el registro.
                 <span v-if="notaBloqueada"> Nota grabada: solo lectura.</span>
               </p>
               <div class="siah-metabolic">
-                <div class="siah-condition">
-                  <label>Diabetes</label>
-                  <button
-                    type="button"
-                    class="siah-badge"
-                    :class="notaCronica.diabetes === 'positivo' ? 'siah-badge--pending' : 'siah-badge--wait'"
-                    :disabled="notaBloqueada || notaCronica.diabetes === 'positivo'"
-                    @click="toggleCronico('diabetes')"
-                  >
-                    {{ notaCronica.diabetes === "positivo" ? "REGISTRADA" : "NO REGISTRADA" }}
-                  </button>
-                </div>
-                <div class="siah-condition">
-                  <label>Hipertensión</label>
-                  <button
-                    type="button"
-                    class="siah-badge"
-                    :class="notaCronica.hipertension === 'positivo' ? 'siah-badge--pending' : 'siah-badge--wait'"
-                    :disabled="notaBloqueada || notaCronica.hipertension === 'positivo'"
-                    @click="toggleCronico('hipertension')"
-                  >
-                    {{ notaCronica.hipertension === "positivo" ? "REGISTRADA" : "NO REGISTRADA" }}
-                  </button>
-                </div>
-                <div
+                <button
+                  v-for="s in sindromesUi"
+                  :key="s.key"
+                  type="button"
                   class="siah-condition"
-                  title="Se registra con los signos vitales cuando el IMC es 25 o mayor."
+                  :class="{
+                    'siah-condition--on': s.on,
+                    'siah-condition--clickable': s.clickable,
+                  }"
+                  :disabled="!s.clickable"
+                  :title="s.title"
+                  @click="toggleCronico(s.key)"
                 >
-                  <label>Obesidad</label>
-                  <span
-                    class="siah-badge"
-                    :class="notaCronica.obesidad === 'positivo' ? 'siah-badge--pending' : 'siah-badge--wait'"
-                  >
-                    {{ notaCronica.obesidad === "positivo" ? "REGISTRADA" : "NO REGISTRADA" }}
+                  <span class="siah-condition__icon" aria-hidden="true">
+                    <UIcon :name="s.icon" class="size-5" />
                   </span>
-                </div>
-                <div class="siah-condition">
-                  <label>Alergias</label>
-                  <button
-                    type="button"
-                    class="siah-badge"
-                    :class="notaCronica.alergias === 'positivo' ? 'siah-badge--pending' : 'siah-badge--wait'"
-                    :disabled="notaBloqueada"
-                    @click="toggleCronico('alergias')"
-                  >
-                    {{ notaCronica.alergias === "positivo" ? "REGISTRADAS" : "NO REGISTRADAS" }}
-                  </button>
-                </div>
+                  <span class="siah-condition__body">
+                    <span class="siah-condition__label">{{ s.label }}</span>
+                    <span
+                      class="siah-badge"
+                      :class="s.on ? 'siah-badge--pending' : 'siah-badge--wait'"
+                    >
+                      {{ s.badge }}
+                    </span>
+                  </span>
+                </button>
               </div>
               <div v-if="notaCronica.alergias === 'positivo'" class="mt-3 space-y-2">
                 <p class="text-[0.7rem] font-semibold text-muted m-0">
@@ -4424,107 +4627,135 @@ onMounted(async () => {
               <div v-show="consultaUiTab === 'clinical'" class="siah-tab-panel" role="tabpanel">
             <AtmedSectionCard title="Motivo de consulta">
               <p class="siah-helper">
-                Autocomplete CIE-10 (≥2 caracteres). No se carga el catálogo completo al cliente.
+                Busque el CIE-10, selecciónelo y pulse Agregar. CIE-10 y motivo se llenan solos y no se editan a mano.
               </p>
-              <div class="siah-clinical-grid">
-                <CatalogAutocomplete
-                  :api-base="apiBase"
-                  :api-prefix="apiPrefix"
-                  :session="session"
-                  tipo="cie10"
-                  label="Buscar CIE-10 (motivo de consulta)"
-                  placeholder="Clave o descripción (mín. 2 caracteres)"
-                  :disabled="notaBloqueada"
-                  @select="onPickCieMotivo"
-                />
-                <UFormField label="CIE-10" class="w-full" :ui="notaFieldUi">
-                  <UInput
-                    v-model="consulta.motivoCie10"
-                    maxlength="5"
-                    size="md"
-                    class="w-full uppercase"
-                    :disabled="notaBloqueada"
-                  />
-                </UFormField>
-                <UFormField label="Motivo de consulta" class="w-full min-w-0" :ui="notaFieldUi">
-                  <UInput
-                    v-model="consulta.motivoConsulta"
-                    size="md"
-                    class="w-full min-w-0"
-                    :disabled="notaBloqueada"
-                  />
-                </UFormField>
+              <div class="space-y-3">
+                <div class="flex w-full flex-nowrap items-end gap-2">
+                  <div class="min-w-0 flex-1">
+                    <CatalogAutocomplete
+                      v-model="motivoQ"
+                      :api-base="apiBase"
+                      :api-prefix="apiPrefix"
+                      :session="session"
+                      tipo="cie10"
+                      size="lg"
+                      label="Buscar CIE-10 (motivo de consulta)"
+                      placeholder="Clave o descripción (≥2 caracteres)…"
+                      :disabled="notaBloqueada"
+                      @select="onPickCieMotivo"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    class="siah-proto-btn siah-proto-btn--primary shrink-0"
+                    :disabled="!motivoPendiente || notaBloqueada"
+                    @click="agregarMotivoConsulta"
+                  >
+                    Agregar
+                  </button>
+                </div>
+                <div class="siah-clinical-grid">
+                  <UFormField label="CIE-10" class="w-full" :ui="notaFieldUi">
+                    <UInput
+                      :model-value="consulta.motivoCie10"
+                      maxlength="5"
+                      size="md"
+                      class="w-full uppercase"
+                      :ui="notaInputUi"
+                      readonly
+                      :disabled="true"
+                    />
+                  </UFormField>
+                  <UFormField label="Motivo de consulta" class="w-full min-w-0" :ui="notaFieldUi">
+                    <UInput
+                      :model-value="consulta.motivoConsulta"
+                      size="md"
+                      class="w-full min-w-0"
+                      :ui="notaInputUi"
+                      readonly
+                      :disabled="true"
+                    />
+                  </UFormField>
+                </div>
               </div>
             </AtmedSectionCard>
 
             <AtmedSectionCard title="Nota clínica">
               <p class="siah-helper">
                 Mínimo {{ SOAP_MIN_CHARS }} caracteres propios en Síntomas, Objetivo, Análisis y Plan.
-                No cuenta la frase precargada, las alergias ni el bloque de signos vitales.
+                No cuenta el texto precargado de síntomas/alergias ni el bloque automático de signos vitales.
                 <span v-if="notaBloqueada"> Solo lectura.</span>
               </p>
               <p v-if="soapBloqueadoSinSignos" class="siah-helper" style="color: #aa6600">
                 Capture signos vitales antes de editar Síntomas y Objetivo.
               </p>
               <div class="siah-nota-fields siah-soap">
-                <label class="siah-field">
+                <label class="siah-field" :class="{ 'siah-soap-incomplete': soapBoxIncomplete(soapLens.sintomas) }">
                   Síntomas o subjetivo *
                   <UTextarea
                     v-model="consulta.sintomas"
                     :rows="5"
                     autoresize
                     class="w-full mt-[7px]"
-                    :ui="notaTextareaUi"
+                    :color="soapBoxIncomplete(soapLens.sintomas) ? 'error' : 'neutral'"
+                    :highlight="soapBoxIncomplete(soapLens.sintomas)"
+                    :ui="soapBoxUi(soapLens.sintomas)"
                     :disabled="notaBloqueada || soapBloqueadoSinSignos"
                     placeholder="Captura síntomas o subjetivo…"
                   />
-                  <div class="siah-fields-counter">
+                  <div class="siah-fields-counter" :class="{ 'siah-fields-counter--alert': soapBoxIncomplete(soapLens.sintomas) }">
                     {{ soapLens.sintomas }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }}
                   </div>
                 </label>
-                <label class="siah-field">
+                <label class="siah-field" :class="{ 'siah-soap-incomplete': soapBoxIncomplete(soapLens.objetivo) }">
                   Objetivo *
                   <UTextarea
                     v-model="consulta.objetivo"
                     :rows="5"
                     autoresize
                     class="w-full mt-[7px]"
-                    :ui="notaTextareaUi"
+                    :color="soapBoxIncomplete(soapLens.objetivo) ? 'error' : 'neutral'"
+                    :highlight="soapBoxIncomplete(soapLens.objetivo)"
+                    :ui="soapBoxUi(soapLens.objetivo)"
                     :disabled="notaBloqueada || soapBloqueadoSinSignos"
                     placeholder="Captura objetivo…"
                   />
-                  <div class="siah-fields-counter">
+                  <div class="siah-fields-counter" :class="{ 'siah-fields-counter--alert': soapBoxIncomplete(soapLens.objetivo) }">
                     {{ soapLens.objetivo }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }}
                   </div>
                 </label>
-                <label class="siah-field">
+                <label class="siah-field" :class="{ 'siah-soap-incomplete': soapBoxIncomplete(soapLens.analisis) }">
                   Análisis *
                   <UTextarea
                     v-model="consulta.analisis"
                     :rows="5"
                     autoresize
                     class="w-full mt-[7px]"
-                    :ui="notaTextareaUi"
+                    :color="soapBoxIncomplete(soapLens.analisis) ? 'error' : 'neutral'"
+                    :highlight="soapBoxIncomplete(soapLens.analisis)"
+                    :ui="soapBoxUi(soapLens.analisis)"
                     :disabled="notaBloqueada"
                     placeholder="Captura análisis…"
                   />
-                  <div class="siah-fields-counter">
+                  <div class="siah-fields-counter" :class="{ 'siah-fields-counter--alert': soapBoxIncomplete(soapLens.analisis) }">
                     {{ soapLens.analisis }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }}
                   </div>
                 </label>
-                <label class="siah-field">
+                <label class="siah-field" :class="{ 'siah-soap-incomplete': soapBoxIncomplete(soapLens.plan) }">
                   Plan *
                   <UTextarea
                     v-model="consulta.plan"
                     :rows="5"
                     autoresize
                     class="w-full mt-[7px]"
-                    :ui="notaTextareaUi"
+                    :color="soapBoxIncomplete(soapLens.plan) ? 'error' : 'neutral'"
+                    :highlight="soapBoxIncomplete(soapLens.plan)"
+                    :ui="soapBoxUi(soapLens.plan)"
                     :disabled="notaBloqueada"
                     placeholder="Captura plan…"
                   />
-                  <div class="siah-fields-counter">
-                    {{ soapLens.plan }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }} (además de los signos vitales)
+                  <div class="siah-fields-counter" :class="{ 'siah-fields-counter--alert': soapBoxIncomplete(soapLens.plan) }">
+                    {{ soapLens.plan }} caracteres propios · mínimo {{ SOAP_MIN_CHARS }}
                   </div>
                 </label>
               </div>
@@ -4670,12 +4901,12 @@ onMounted(async () => {
               </div>
 
               <div v-show="consultaUiTab === 'history'" class="siah-tab-panel" role="tabpanel">
-            <AtmedSectionCard title="Historial de notas (últimas 10)">
+            <AtmedSectionCard title="Historial de notas">
               <input
                 v-model="historialBusqueda"
                 class="siah-search-focus"
                 style="max-width: 380px; margin: 0 0 15px"
-                placeholder="Buscar por folio, fecha o unidad…"
+                placeholder="Buscar por fecha, unidad, especialidad o diagnóstico…"
                 aria-label="Buscar notas"
               />
               <div class="siah-consulta-ficha !border-0">
@@ -4683,11 +4914,11 @@ onMounted(async () => {
                   <thead>
                     <tr>
                       <th>No.</th>
-                      <th>FOLIO</th>
                       <th>FECHA</th>
+                      <th>HORA</th>
                       <th>UNIDAD MÉDICA</th>
-                      <th>HOSPITAL</th>
-                      <th>ESTATUS</th>
+                      <th>ESPECIALIDAD</th>
+                      <th>DIAGNÓSTICO</th>
                       <th>ACCIONES</th>
                     </tr>
                   </thead>
@@ -4697,17 +4928,11 @@ onMounted(async () => {
                     </tr>
                     <tr v-for="(h, idx) in historialPageRows" :key="`${h.hosi_folio}-${h.unitrab}`">
                       <td>{{ historialPageFrom + idx }}</td>
-                      <td><b>{{ h.hosi_folio }}</b></td>
-                      <td>{{ h.cond_fechcon || "—" }}</td>
-                      <td>{{ h.unitrab }}</td>
-                      <td>{{ h.hospital || "—" }}</td>
-                      <td>
-                        <span
-                          :class="h.schema_ok ? 'siah-badge siah-badge--done' : 'siah-badge siah-badge--pending'"
-                        >
-                          {{ h.schema_ok ? "NOTA GRABADA" : "NO DISPONIBLE" }}
-                        </span>
-                      </td>
+                      <td>{{ formatFechaNota(h.cond_fechcon || h.fecha) }}</td>
+                      <td>{{ horaHistorial(h) }}</td>
+                      <td class="siah-historial-wrap">{{ unidadHistorial(h) }}</td>
+                      <td class="siah-historial-wrap">{{ h.especialidad || h.servicio || "—" }}</td>
+                      <td class="siah-historial-wrap">{{ diagnosticoHistorial(h) }}</td>
                       <td>
                         <button
                           type="button"
@@ -4802,6 +5027,37 @@ onMounted(async () => {
       </main>
     </div>
 
+    <UModal
+      v-model:open="otraCitaOpen"
+      :dismissible="false"
+      :ui="{ content: 'max-w-md w-full' }"
+    >
+      <template #content>
+        <div class="space-y-3 p-4">
+          <h3 class="text-sm font-bold uppercase text-highlighted m-0">Cita grabada</h3>
+          <p v-if="otraCitaFolio" class="text-sm m-0">
+            Folio de cita médica: <strong>{{ otraCitaFolio }}</strong>
+          </p>
+          <p class="text-sm m-0">¿DESEA REGISTRAR OTRA CITA?</p>
+          <div class="flex justify-end gap-2">
+            <UButton
+              label="No"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              @click="confirmarOtraCita(false)"
+            />
+            <UButton
+              label="Sí"
+              color="primary"
+              size="sm"
+              @click="confirmarOtraCita(true)"
+            />
+          </div>
+        </div>
+      </template>
+    </UModal>
+
     <UModal v-model:open="censoAltaOpen" :ui="{ content: 'max-w-md w-full' }">
       <template #content>
         <div class="space-y-3 p-4">
@@ -4882,10 +5138,7 @@ onMounted(async () => {
         <div class="space-y-3 p-4">
           <h3 class="text-sm font-bold uppercase text-highlighted m-0">Nota anterior (solo lectura)</h3>
           <p class="text-xs text-muted m-0">
-            {{ formatFechaNota(historialNota?.cond_fechcon) }}
-            · {{ historialNota?.unidad_medica || historialNota?.hospital || historialNota?.unitrab || "—" }}
-            · {{ historialNota?.especialidad || "—" }}
-            · Folio {{ historialNota?.hosi_folio }}
+            {{ lineaHistorialMain(historialNota) }}
           </p>
           <div class="space-y-2 text-sm max-h-[60vh] overflow-auto">
             <p class="m-0"><strong>Subjetivo.</strong> {{ historialNota?.sintomas || "—" }}</p>
