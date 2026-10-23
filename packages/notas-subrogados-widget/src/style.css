@@ -225,6 +225,17 @@
   margin-top: 6px;
 }
 
+.siah-atmed-widget .siah-fields-counter--alert {
+  color: #b30000;
+  font-weight: 600;
+}
+
+.siah-atmed-widget .siah-soap-incomplete textarea,
+.siah-atmed-widget .siah-soap-incomplete [data-slot="base"] {
+  border-color: #c53030 !important;
+  box-shadow: 0 0 0 1px #c53030;
+}
+
 .siah-atmed-widget .siah-kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -476,7 +487,7 @@
 .siah-atmed-widget .siah-vital-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  gap: 12px;
 }
 
 .siah-atmed-widget .siah-vital-column {
@@ -487,7 +498,7 @@
 }
 
 .siah-atmed-widget .siah-vital-head {
-  padding: 16px;
+  padding: 8px 12px;
   background: #f4f7f9;
   border-bottom: 1px solid var(--siah-line);
 }
@@ -495,16 +506,16 @@
 .siah-atmed-widget .siah-vital-head strong {
   display: block;
   color: var(--siah-green);
-  margin-bottom: 5px;
+  margin-bottom: 2px;
   font-size: 13px;
 }
 
 .siah-atmed-widget .siah-vital-content {
-  padding: 0 17px 17px;
+  padding: 0 12px 12px;
 }
 
 .siah-atmed-widget .siah-vital-group {
-  margin-top: 18px;
+  margin-top: 8px;
 }
 
 .siah-atmed-widget .siah-group-title {
@@ -513,28 +524,28 @@
   text-transform: uppercase;
   font-weight: 700;
   border-bottom: 1px solid var(--siah-line);
-  padding-bottom: 8px;
-  margin-bottom: 12px;
+  padding-bottom: 3px;
+  margin-bottom: 6px;
 }
 
 .siah-atmed-widget .siah-vital-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 8px;
 }
 
 .siah-atmed-widget .siah-last-item {
   background: #f8fafb;
   border: 1px solid #e8edf1;
   border-radius: 5px;
-  padding: 10px;
+  padding: 7px 8px;
 }
 
 .siah-atmed-widget .siah-last-item small {
   display: block;
   color: var(--siah-muted);
   font-size: 11px;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 
 .siah-atmed-widget .siah-last-item b {
@@ -553,7 +564,7 @@
   align-items: center;
   border: 1px solid var(--siah-input-border);
   border-radius: 5px;
-  margin-top: 6px;
+  margin-top: 4px;
   background: white;
 }
 
@@ -562,7 +573,7 @@
   border: 0;
   min-width: 0;
   flex: 1;
-  padding: 10px;
+  padding: 7px 8px;
   background: transparent;
   color: var(--siah-ink);
   font: inherit;
@@ -583,35 +594,148 @@
   display: flex;
   gap: 10px;
   justify-content: flex-end;
-  margin-top: 18px;
+  margin-top: 10px;
   flex-wrap: wrap;
 }
 
 .siah-atmed-widget .siah-metabolic {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
 }
 
 .siah-atmed-widget .siah-condition {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
   background: #f8fafb;
   border: 1px solid var(--siah-line);
-  border-radius: 6px;
-  padding: 12px;
-  text-align: center;
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
+.siah-atmed-widget .siah-condition--clickable {
+  cursor: pointer;
+}
+
+.siah-atmed-widget .siah-condition--clickable:hover {
+  border-color: var(--siah-green);
+  background: #edf6f1;
+  box-shadow: 0 0 0 3px #006b4414;
+}
+
+.siah-atmed-widget .siah-condition--on {
+  background: #fff6f6;
+  border-color: #efcccc;
+}
+
+.siah-atmed-widget .siah-condition:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.siah-atmed-widget .siah-condition__icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: #edf6f1;
+  color: var(--siah-green);
+}
+
+.siah-atmed-widget .siah-condition--on .siah-condition__icon {
+  background: #ffe5e5;
+  color: #b30000;
+}
+
+.siah-atmed-widget .siah-condition__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.siah-atmed-widget .siah-condition__label,
 .siah-atmed-widget .siah-condition label {
   display: block;
-  margin-bottom: 8px;
+  margin: 0;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--siah-ink);
 }
 
-.siah-atmed-widget .siah-condition button {
-  padding: 5px 8px;
+.siah-atmed-widget .siah-imc-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0 4px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #eef6f2;
+  border: 1px solid #cfe3d8;
+}
+
+.siah-atmed-widget .siah-imc-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 7.5rem;
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: #fff;
+  border: 1px solid var(--siah-line);
+}
+
+.siah-atmed-widget .siah-imc-chip small {
   font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--siah-muted);
+}
+
+.siah-atmed-widget .siah-imc-chip b {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-imc-chip--ok {
+  background: #e8f7e8;
+  border-color: #0a6b0a33;
+}
+
+.siah-atmed-widget .siah-imc-chip--ok b {
+  color: #0a6b0a;
+}
+
+.siah-atmed-widget .siah-imc-chip--warn {
+  background: #fff6e5;
+  border-color: #b36b0033;
+}
+
+.siah-atmed-widget .siah-imc-chip--warn b {
+  color: #9a5b00;
+}
+
+.siah-atmed-widget .siah-imc-chip--bad {
+  background: #ffe5e5;
+  border-color: #b3000033;
+}
+
+.siah-atmed-widget .siah-imc-chip--bad b {
+  color: #b30000;
 }
 
 .siah-atmed-widget .siah-soap {
@@ -626,7 +750,7 @@
 
 .siah-atmed-widget .siah-clinical-grid {
   display: grid;
-  grid-template-columns: 1fr 100px 2fr;
+  grid-template-columns: minmax(7.5rem, 9rem) minmax(0, 1fr);
   gap: 13px;
   align-items: end;
 }
@@ -648,8 +772,8 @@
 .siah-atmed-widget .siah-helper {
   font-size: 12px;
   color: var(--siah-muted);
-  margin: 0 0 12px;
-  line-height: 1.5;
+  margin: 0 0 8px;
+  line-height: 1.4;
 }
 
 .siah-atmed-widget .siah-radio-line {
@@ -1418,29 +1542,26 @@
 
 .siah-atmed-widget .siah-note-tabs-layout .siah-vital-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 9px;
+  gap: 8px;
 }
 
 .siah-atmed-widget .siah-note-tabs-layout .siah-vital-columns {
-  gap: 15px;
+  gap: 12px;
 }
 
 .siah-atmed-widget .siah-note-tabs-layout .siah-vital-head {
-  padding: 11px 13px;
+  padding: 8px 12px;
 }
 
 .siah-atmed-widget .siah-note-tabs-layout .siah-vital-content {
-  padding: 0 13px 13px;
+  padding: 0 12px 12px;
 }
 
 .siah-atmed-widget .siah-note-tabs-layout .siah-condition {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  text-align: left;
-  padding: 10px;
+  padding: 10px 12px;
 }
 
+.siah-atmed-widget .siah-note-tabs-layout .siah-condition__label,
 .siah-atmed-widget .siah-note-tabs-layout .siah-condition label {
   margin: 0;
 }

@@ -14,6 +14,7 @@ const props = withDefaults(
     label?: string;
     minChars?: number;
     disabled?: boolean;
+    size?: "sm" | "md" | "lg" | "xl";
   }>(),
   {
     apiPrefix: "",
@@ -22,6 +23,7 @@ const props = withDefaults(
     label: "",
     minChars: 2,
     disabled: false,
+    size: "sm",
   },
 );
 
@@ -112,19 +114,25 @@ function onBlur() {
     open.value = false;
   }, 180);
 }
+
+/** UInput es inline-flex y se encoge al placeholder si no se fuerza el ancho. */
+const fieldUi = { root: "w-full", container: "w-full mt-1" };
+const inputUi = { root: "relative inline-flex items-center w-full" };
 </script>
 
 <template>
-  <div class="relative w-full">
-    <UFormField v-if="label" :label="label" class="w-full">
+  <div class="relative w-full min-w-0">
+    <UFormField v-if="label" :label="label" class="w-full" :ui="fieldUi">
       <UInput
         :model-value="q"
-        size="sm"
+        :size="size"
         icon="i-lucide-search"
         :loading="loading"
         :placeholder="placeholder"
         :disabled="disabled"
         autocomplete="off"
+        class="w-full"
+        :ui="inputUi"
         @update:model-value="onInput(String($event ?? ''))"
         @focus="open = true"
         @blur="onBlur"
@@ -133,12 +141,14 @@ function onBlur() {
     <UInput
       v-else
       :model-value="q"
-      size="sm"
+      :size="size"
       icon="i-lucide-search"
       :loading="loading"
       :placeholder="placeholder"
       :disabled="disabled"
       autocomplete="off"
+      class="w-full"
+      :ui="inputUi"
       @update:model-value="onInput(String($event ?? ''))"
       @focus="open = true"
       @blur="onBlur"

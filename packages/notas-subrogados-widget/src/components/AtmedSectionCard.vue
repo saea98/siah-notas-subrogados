@@ -1,17 +1,24 @@
 <script setup lang="ts">
-defineProps<{
-  title: string;
-  /** Número de sección estilo prototipo (opcional). */
-  number?: string | number;
-}>();
+withDefaults(
+  defineProps<{
+    title: string;
+    /** Número de sección estilo prototipo (opcional). */
+    number?: string | number;
+    /** Menos padding en encabezado y cuerpo. */
+    dense?: boolean;
+  }>(),
+  { dense: false },
+);
 </script>
 
 <template>
   <UCard
     :ui="{
       root: 'overflow-visible w-full rounded-[7px] border border-[var(--siah-line,#dfe6ef)] bg-white shadow-none',
-      header: 'px-5 py-4 bg-[#fafcfd] border-b border-[var(--siah-line,#dfe6ef)]',
-      body: 'p-5 w-full overflow-visible',
+      header: dense
+        ? 'px-4 py-2 bg-[#fafcfd] border-b border-[var(--siah-line,#dfe6ef)]'
+        : 'px-5 py-4 bg-[#fafcfd] border-b border-[var(--siah-line,#dfe6ef)]',
+      body: dense ? 'p-3 w-full overflow-visible' : 'p-5 w-full overflow-visible',
     }"
   >
     <template #header>

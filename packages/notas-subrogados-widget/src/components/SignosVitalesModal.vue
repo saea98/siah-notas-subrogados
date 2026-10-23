@@ -83,16 +83,16 @@ const emit = defineEmits<{
 
             <div class="grid gap-2">
               <UFormField label="Pulso *" required>
-                <UInput v-model="signos.pulso" inputmode="numeric" size="sm" :disabled="readOnly" />
+                <UInput v-model="signos.pulso" inputmode="numeric" size="sm" placeholder="30–200" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Resp x min *" required>
-                <UInput v-model="signos.respiracion" inputmode="numeric" size="sm" :disabled="readOnly" />
+                <UInput v-model="signos.respiracion" inputmode="numeric" size="sm" placeholder="5–100" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Tensión arterial *" required>
                 <div class="flex items-center gap-2">
-                  <UInput v-model="signos.tension_sis" inputmode="numeric" size="sm" class="flex-1" :disabled="readOnly" />
+                  <UInput v-model="signos.tension_sis" inputmode="numeric" size="sm" class="flex-1" placeholder="0–350" :disabled="readOnly" />
                   <span class="text-muted">/</span>
-                  <UInput v-model="signos.tension_dia" inputmode="numeric" size="sm" class="flex-1" :disabled="readOnly" />
+                  <UInput v-model="signos.tension_dia" inputmode="numeric" size="sm" class="flex-1" placeholder="0–200" :disabled="readOnly" />
                 </div>
               </UFormField>
               <UFormField label="Clasificación TA">
@@ -109,13 +109,13 @@ const emit = defineEmits<{
                 />
               </UFormField>
               <UFormField label="Temp (°C) *" required>
-                <UInput v-model="signos.temperatura" inputmode="decimal" size="sm" :disabled="readOnly" />
+                <UInput v-model="signos.temperatura" inputmode="decimal" size="sm" placeholder="15–50" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Peso (kg) *" required>
-                <UInput v-model="signos.peso" inputmode="decimal" size="sm" :disabled="readOnly" />
+                <UInput v-model="signos.peso" inputmode="decimal" size="sm" placeholder="0.5–250" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Estatura (m) *" required>
-                <UInput v-model="signos.estatura" inputmode="decimal" size="sm" :disabled="readOnly" />
+                <UInput v-model="signos.estatura" inputmode="decimal" size="sm" placeholder="0.1–2.5" :disabled="readOnly" />
               </UFormField>
               <UFormField label="I.M.C">
                 <UInput :model-value="signosImc ?? '—'" readonly size="sm" />
@@ -132,7 +132,7 @@ const emit = defineEmits<{
                 <UInput model-value="N/A" readonly size="sm" />
               </UFormField>
               <UFormField label="P. abdominal (cm)">
-                <UInput v-model="signos.abdominal" inputmode="numeric" size="sm" :disabled="readOnly" />
+                <UInput v-model="signos.abdominal" inputmode="numeric" size="sm" placeholder="15–500" :disabled="readOnly" />
               </UFormField>
               <UFormField label="Sat. O₂ (%)">
                 <UInput v-model="signos.saturacion" inputmode="numeric" size="sm" placeholder="50–100" :disabled="readOnly" />
