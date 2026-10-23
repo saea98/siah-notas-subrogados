@@ -833,6 +833,14 @@
   color: var(--siah-ink);
 }
 
+.siah-atmed-widget .siah-consulta-ficha td.siah-historial-wrap {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.45;
+  min-width: 8rem;
+  max-width: 18rem;
+}
+
 .siah-atmed-widget .siah-nota-fields {
   width: 100%;
 }

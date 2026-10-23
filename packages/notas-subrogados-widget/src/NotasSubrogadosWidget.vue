@@ -1632,10 +1632,8 @@ const historialFiltrado = computed(() => {
   const q = historialBusqueda.value.trim().toLowerCase();
   if (!q) return historialNotas.value;
   return historialNotas.value.filter((h) =>
-    [h.hosi_folio, h.cond_fechcon, h.unitrab, h.hospital]
-      .map((v) => String(v ?? "").toLowerCase())
-      .join(" ")
-      .includes(q),
+    lineaHistorialMain(h).toLowerCase().includes(q)
+    || String(h.hosi_folio ?? "").toLowerCase().includes(q),
   );
 });
 
@@ -2200,13 +2198,47 @@ function formatFechaNota(value: unknown): string {
 }
 
 function formatHoraNota(value: unknown): string {
-  const n = Number(value);
-  if (Number.isFinite(n) && n > 0 && n < 2400) {
+  if (value == null || value === "") return "—";
+  const raw = String(value).trim();
+  const hm = raw.match(/(?:^|[T\s])(\d{1,2}):(\d{2})/);
+  if (hm) return `${hm[1].padStart(2, "0")}:${hm[2]}`;
+  if (/^\d{1,2}:\d{2}/.test(raw)) return raw.slice(0, 5);
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 0 && n < 2400 && !raw.includes(":")) {
     return `${String(Math.floor(n / 100)).padStart(2, "0")}:${String(n % 100).padStart(2, "0")}`;
   }
-  const raw = String(value || "");
   if (raw.includes("T") || raw.includes(" ")) return raw.slice(11, 16) || "—";
   return "—";
+}
+
+function horaHistorial(row: Record<string, unknown>): string {
+  const fromField = formatHoraNota(row.conn_horaini ?? row.hora ?? row.hora_consulta);
+  if (fromField !== "—") return fromField;
+  return formatHoraNota(row.cond_fechcon);
+}
+
+function unidadHistorial(row: Record<string, unknown>): string {
+  return String(row.unidad_medica || row.hospital || "").trim() || "—";
+}
+
+function diagnosticoHistorial(row: Record<string, unknown>): string {
+  const cie = String(row.diai_clacie1 || row.cie2 || "").trim();
+  const dx = String(row.diagnostico || row.diagnosticoConsulta || "").trim();
+  if (cie && dx) return `${cie} — ${dx}`;
+  return cie || dx || "—";
+}
+
+/** Misma línea que el historial médico en main / ECE. */
+function lineaHistorialMain(row: Record<string, unknown> | null | undefined): string {
+  if (!row) return "—";
+  const parts = [
+    formatFechaNota(row.cond_fechcon || row.fecha),
+    horaHistorial(row),
+    unidadHistorial(row),
+    String(row.especialidad || row.servicio || "").trim() || "—",
+    diagnosticoHistorial(row),
+  ].filter((p) => p && p !== "—");
+  return parts.join(" · ") || "—";
 }
 
 function formatCitaHoraShort(hhmm: unknown): string {
@@ -4823,7 +4855,7 @@ onMounted(async () => {
                 v-model="historialBusqueda"
                 class="siah-search-focus"
                 style="max-width: 380px; margin: 0 0 15px"
-                placeholder="Buscar por folio, fecha o unidad…"
+                placeholder="Buscar por fecha, unidad, especialidad o diagnóstico…"
                 aria-label="Buscar notas"
               />
               <div class="siah-consulta-ficha !border-0">
@@ -4831,11 +4863,11 @@ onMounted(async () => {
                   <thead>
                     <tr>
                       <th>No.</th>
-                      <th>FOLIO</th>
                       <th>FECHA</th>
+                      <th>HORA</th>
                       <th>UNIDAD MÉDICA</th>
-                      <th>HOSPITAL</th>
-                      <th>ESTATUS</th>
+                      <th>ESPECIALIDAD</th>
+                      <th>DIAGNÓSTICO</th>
                       <th>ACCIONES</th>
                     </tr>
                   </thead>
@@ -4845,17 +4877,11 @@ onMounted(async () => {
                     </tr>
                     <tr v-for="(h, idx) in historialPageRows" :key="`${h.hosi_folio}-${h.unitrab}`">
                       <td>{{ historialPageFrom + idx }}</td>
-                      <td><b>{{ h.hosi_folio }}</b></td>
-                      <td>{{ h.cond_fechcon || "—" }}</td>
-                      <td>{{ h.unitrab }}</td>
-                      <td>{{ h.hospital || "—" }}</td>
-                      <td>
-                        <span
-                          :class="h.schema_ok ? 'siah-badge siah-badge--done' : 'siah-badge siah-badge--pending'"
-                        >
-                          {{ h.schema_ok ? "NOTA GRABADA" : "NO DISPONIBLE" }}
-                        </span>
-                      </td>
+                      <td>{{ formatFechaNota(h.cond_fechcon || h.fecha) }}</td>
+                      <td>{{ horaHistorial(h) }}</td>
+                      <td class="siah-historial-wrap">{{ unidadHistorial(h) }}</td>
+                      <td class="siah-historial-wrap">{{ h.especialidad || h.servicio || "—" }}</td>
+                      <td class="siah-historial-wrap">{{ diagnosticoHistorial(h) }}</td>
                       <td>
                         <button
                           type="button"
@@ -5030,10 +5056,7 @@ onMounted(async () => {
         <div class="space-y-3 p-4">
           <h3 class="text-sm font-bold uppercase text-highlighted m-0">Nota anterior (solo lectura)</h3>
           <p class="text-xs text-muted m-0">
-            {{ formatFechaNota(historialNota?.cond_fechcon) }}
-            · {{ historialNota?.unidad_medica || historialNota?.hospital || historialNota?.unitrab || "—" }}
-            · {{ historialNota?.especialidad || "—" }}
-            · Folio {{ historialNota?.hosi_folio }}
+            {{ lineaHistorialMain(historialNota) }}
           </p>
           <div class="space-y-2 text-sm max-h-[60vh] overflow-auto">
             <p class="m-0"><strong>Subjetivo.</strong> {{ historialNota?.sintomas || "—" }}</p>
