@@ -93,8 +93,22 @@ const props = withDefaults(
     embedded?: boolean;
     /** Módulo inicial / forzado desde el host (Accesos rápidos). */
     initialModule?: "agenda" | "asignar" | "consulta" | null;
+    /**
+     * El host lo incrementa en cada clic de Accesos rápidos.
+     * Permite volver a Agenda aunque el host ya tuviera `initialModule="agenda"`.
+     */
+    moduleNonce?: number;
+    /** Host: Spatie interconsulta_atencion_medica. */
+    puedeVerInterconsultas?: boolean;
   }>(),
-  { apiPrefix: "", showModuleNav: true, embedded: false, initialModule: null },
+  {
+    apiPrefix: "",
+    showModuleNav: true,
+    embedded: false,
+    initialModule: null,
+    moduleNonce: 0,
+    puedeVerInterconsultas: true,
+  },
 );
 
 const emit = defineEmits<{
@@ -138,6 +152,8 @@ const emit = defineEmits<{
   ];
   /** Host abre la bandeja de interconsultas. */
   openInterconsultas: [];
+  /** Sincroniza Accesos rápidos del host con el tab interno (agenda / asignar / consulta). */
+  "update:module": [module: "agenda" | "asignar" | "consulta"];
   /** Notifica al host el folio activo y si la nota ya está grabada. */
   consultaGuardada: [payload: { hosi_folio: number; saved: boolean }];
 }>();
@@ -215,6 +231,8 @@ const asignando = ref(false);
 const pacienteBuscado = ref(false);
 const citasPaciente = ref<Record<string, unknown>[]>([]);
 const asignarOkFolio = ref("");
+const otraCitaOpen = ref(false);
+const otraCitaFolio = ref("");
 const buscarHint = ref("Ingrese los datos del paciente para buscarlo en el sistema.");
 const agendaAsignarPage = ref(1);
 const AGENDA_ASIGNAR_PAGE_SIZE = 10;
@@ -271,14 +289,19 @@ const sidebarNavAll = [
 ] as const;
 
 const sidebarNav = computed(() =>
-  esRecepcionista.value
-    ? sidebarNavAll.filter((n) => n.id !== "consulta")
-    : [...sidebarNavAll],
+  sidebarNavAll.filter((n) => {
+    if (n.id === "consulta" && esRecepcionista.value) return false;
+    if (n.id === "interconsultas" && !props.puedeVerInterconsultas) return false;
+    return true;
+  }),
 );
 
 function onSidebarNavClick(nav: (typeof sidebarNavAll)[number]) {
   if (nav.kind === "host") {
-    if (nav.id === "interconsultas") emit("openInterconsultas");
+    if (nav.id === "interconsultas") {
+      if (!props.puedeVerInterconsultas) return;
+      emit("openInterconsultas");
+    }
     return;
   }
   tab.value = nav.id as typeof tab.value;
@@ -862,6 +885,7 @@ const consultaPhotoFailed = ref(false);
 const consultaPhotoSrc = ref("");
 const consultaPhotoError = ref("");
 const consultaLoadedFolio = ref(0);
+let consultaContextSeq = 0;
 
 const signos = reactive({
   hosi_folio: 0,
@@ -1363,15 +1387,18 @@ function soapHint(n: number): string {
 }
 
 async function loadRecetasConsulta() {
+  const folio = Number(citaCtx.hosi_folio || 0);
   recetasConsulta.value = [];
-  if (!citaCtx.hosi_folio) return;
+  if (!folio) return;
   try {
     const data = await post<{ rows?: Record<string, unknown>[] }>("/sub/recetas/list", {
       ...props.session,
-      hosi_folio: citaCtx.hosi_folio,
+      hosi_folio: folio,
     });
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     recetasConsulta.value = data.rows || [];
   } catch {
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     recetasConsulta.value = [];
   }
 }
@@ -1416,18 +1443,22 @@ function limpiarSignosCaptura() {
 }
 
 async function loadUltimosSignos() {
-  if (!signos.hosi_folio && !citaCtx.ficha) {
+  const folio = Number(signos.hosi_folio || citaCtx.hosi_folio || 0);
+  const ficha = String(citaCtx.ficha || "").trim();
+  if (!folio && !ficha) {
     ultimosSignos.value = null;
     return;
   }
   try {
     const res = await post<{ rows?: SignosRow[] }>("/sub/atmed/signos/ultimos", {
       ...props.session,
-      hosi_folio: signos.hosi_folio || undefined,
-      ficha: citaCtx.ficha || undefined,
+      hosi_folio: folio || undefined,
+      ficha: ficha || undefined,
     });
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     ultimosSignos.value = res.rows?.[0] ?? null;
   } catch {
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     ultimosSignos.value = null;
   }
 }
@@ -2430,6 +2461,15 @@ function partialClearAsignar() {
   buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
 }
 
+function confirmarOtraCita(registrarOtra: boolean) {
+  otraCitaOpen.value = false;
+  if (registrarOtra) {
+    asignarOkFolio.value = "";
+    return;
+  }
+  tab.value = "agenda";
+}
+
 async function loadAgendaAsignar() {
   fecha.value = asignar.fecha;
   agendaAsignarPage.value = 1;
@@ -2676,13 +2716,12 @@ async function doAsignar() {
     });
     const folio = res.record?.hosi_folio != null ? String(res.record.hosi_folio) : "";
     asignarOkFolio.value = folio;
-    okMsg.value = folio
-      ? `Cita registrada. Folio de cita médica: ${folio}`
-      : res.mensaje || "Cita registrada.";
+    otraCitaFolio.value = folio;
+    otraCitaOpen.value = true;
     partialClearAsignar();
     fecha.value = asignar.fecha;
-    await load();
-    await loadHoras();
+    void load();
+    void loadHoras();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Error al asignar";
   } finally {
@@ -2691,8 +2730,69 @@ async function doAsignar() {
   }
 }
 
+/** Limpia SOAP / crónicos / signos / historial sin tocar la cita seleccionada. */
+function resetConsultaCaptura() {
+  consultaOkLocal.value = false;
+  consulta.sintomas = "";
+  consulta.objetivo = "";
+  consulta.analisis = "";
+  consulta.plan = "";
+  consulta.diai_clacie1 = "";
+  consulta.diai_clacie2 = "";
+  consulta.diai_clacie3 = "";
+  consulta.diai_clacie4 = "";
+  consulta.diai_clacie5 = "";
+  consulta.motivoCie10 = "";
+  consulta.motivoConsulta = "";
+  consulta.diagnosticoTexto = "";
+  consulta.diagnosticoTexto2 = "";
+  consulta.diagnosticoTexto3 = "";
+  consulta.diagnosticoTexto4 = "";
+  consulta.diagnosticoTexto5 = "";
+  consulta.enfermedadPrimeraVez = false;
+  consulta.enfermedadSub = false;
+  consulta.conn_tipocon = "";
+  tipoconMotivo.value = "";
+  dxSlotsVisible.value = 1;
+  dxQ.value = "";
+  dxPendiente.value = null;
+  motivoQ.value = "";
+  motivoPendiente.value = null;
+  consultaLoadedFolio.value = 0;
+  notaCronica.diabetes = "negativo";
+  notaCronica.diabetesTipo = "";
+  notaCronica.hipertension = "negativo";
+  notaCronica.obesidad = "negativo";
+  notaCronica.alergias = "negativo";
+  notaCronica.alergiasDetalle = "";
+  alergiasLista.value = [];
+  alergiaNueva.value = "";
+  syncingAlergiaCatalogoSel.value = true;
+  alergiaCatalogoSel.value = [];
+  syncingAlergiaCatalogoSel.value = false;
+  alergiaOtroTexto.value = "";
+  antecedentesVisitados.value = false;
+  procedimientosSel.value = [];
+  procQ.value = "";
+  procPendiente.value = null;
+  censoBase.diabetes = false;
+  censoBase.hipertension = false;
+  censoBase.obesidad = false;
+  historialNotas.value = [];
+  historialNota.value = null;
+  historialModalOpen.value = false;
+  recetasConsulta.value = [];
+  ultimosSignos.value = null;
+  limpiarSignosCaptura();
+  citaCtx.edad = "";
+  citaCtx.sexo = "";
+  citaCtx.sangre = "";
+  consultaUiTab.value = "vitals";
+}
+
 function selectCita(row: Record<string, unknown>) {
   const folio = Number(row.hosi_folio);
+  const folioChanged = Number(consultaLoadedFolio.value || 0) !== folio;
   consulta.hosi_folio = folio;
   signos.hosi_folio = folio;
   citaCtx.hosi_folio = folio;
@@ -2708,9 +2808,7 @@ function selectCita(row: Record<string, unknown>) {
   citaCtx.horaTermino = 0;
   citaCtx.esps_espserv = Number(row.esps_espserv || 0);
   citaCtx.unitrab_nota = props.session.unitrab;
-  if (row.derd_fecnac) {
-    citaCtx.fecnac = String(row.derd_fecnac).slice(0, 10);
-  }
+  citaCtx.fecnac = row.derd_fecnac ? String(row.derd_fecnac).slice(0, 10) : "";
   const flag = String(row.requiere_signos || "").toUpperCase();
   if (flag === "N" || flag === "S") {
     citaCtx.requiere_signos = flag;
@@ -2721,47 +2819,23 @@ function selectCita(row: Record<string, unknown>) {
   // Estatus 4 = atendida / nota grabada (legacy).
   notaBloqueada.value = Number(row.cits_estatus) === 4;
   consultaOkLocal.value = notaBloqueada.value;
-  if (consultaLoadedFolio.value !== folio) {
-    // Evitar arrastrar dx / procedimientos / SOAP de otra consulta.
-    consulta.sintomas = "";
-    consulta.objetivo = "";
-    consulta.analisis = "";
-    consulta.plan = "";
-    consulta.diai_clacie1 = "";
-    consulta.diai_clacie2 = "";
-    consulta.diai_clacie3 = "";
-    consulta.diai_clacie4 = "";
-    consulta.diai_clacie5 = "";
-    consulta.motivoCie10 = "";
-    consulta.motivoConsulta = "";
-    consulta.diagnosticoTexto = "";
-    consulta.diagnosticoTexto2 = "";
-    consulta.diagnosticoTexto3 = "";
-    consulta.diagnosticoTexto4 = "";
-    consulta.diagnosticoTexto5 = "";
-    consulta.enfermedadPrimeraVez = false;
-    consulta.enfermedadSub = false;
-    consulta.conn_tipocon = "";
-    tipoconMotivo.value = "";
-    dxSlotsVisible.value = 1;
-    dxQ.value = "";
-    dxPendiente.value = null;
-    motivoQ.value = "";
-    motivoPendiente.value = null;
-    procedimientosSel.value = [];
-    procQ.value = "";
-    procPendiente.value = null;
-    consultaLoadedFolio.value = 0;
+  if (folioChanged) {
+    consultaContextSeq += 1;
+    resetConsultaCaptura();
+    consulta.hosi_folio = folio;
+    signos.hosi_folio = folio;
   }
 }
 
 async function loadNotaGrabada() {
-  if (!citaCtx.hosi_folio) return;
+  const folio = Number(citaCtx.hosi_folio || 0);
+  if (!folio) return;
   try {
     const res = await post<{ record: Record<string, unknown> }>("/sub/atmed/consulta/detalle", {
       ...props.session,
-      hosi_folio: citaCtx.hosi_folio,
+      hosi_folio: folio,
     });
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     const r = res.record || {};
     if (!r.grabada) {
       if (!notaBloqueada.value) return;
@@ -2837,39 +2911,51 @@ async function loadNotaGrabada() {
 let consultaContextInflight: Promise<void> | null = null;
 let consultaContextInflightKey = "";
 
+function consultaContextStale(seq: number, folio: number): boolean {
+  return seq !== consultaContextSeq || Number(citaCtx.hosi_folio || 0) !== folio;
+}
+
 async function loadConsultaContext(force = false) {
   if (!citaCtx.ficha) return;
   if (!force && consultaLoadedFolio.value === citaCtx.hosi_folio && citaCtx.hosi_folio) return;
 
-  const key = [
-    Number(citaCtx.hosi_folio || 0),
-    String(citaCtx.ficha || "").trim(),
-    String(citaCtx.codigo || "00").trim(),
-    Number(citaCtx.empresa || 0),
-  ].join("|");
+  const folio = Number(citaCtx.hosi_folio || 0);
+  const ficha = String(citaCtx.ficha || "").trim();
+  const codigo = String(citaCtx.codigo || "00").trim();
+  const empresa = Number(citaCtx.empresa || 0);
+  const esps = citaCtx.esps_espserv || undefined;
+  const key = [folio, ficha, codigo, empresa].join("|");
 
   if (consultaContextInflight && consultaContextInflightKey === key) {
     return consultaContextInflight;
   }
 
+  const seq = ++consultaContextSeq;
+
   const run = (async () => {
     consultaPhotoFailed.value = false;
+    if (Number(consultaLoadedFolio.value || 0) !== folio) {
+      resetConsultaCaptura();
+      consulta.hosi_folio = folio;
+      signos.hosi_folio = folio;
+    }
     try {
       const [det, pre] = await Promise.all([
         post<{ ok: boolean; record: Record<string, unknown> }>("/derech/detail", {
           ...props.session,
-          ficha: citaCtx.ficha.trim(),
-          codigo: (citaCtx.codigo || "00").trim(),
-          empresa: citaCtx.empresa,
+          ficha,
+          codigo,
+          empresa,
         }),
         post<{ success?: boolean; data?: Record<string, unknown> }>("/ece/nota/ce/precarga", {
           ...props.session,
-          ficha: citaCtx.ficha.trim(),
-          idCodificacion: (citaCtx.codigo || "00").trim(),
-          idEmpresa: citaCtx.empresa,
-          idEspecialidad: citaCtx.esps_espserv || undefined,
+          ficha,
+          idCodificacion: codigo,
+          idEmpresa: empresa,
+          idEspecialidad: esps,
         }).catch(() => ({ data: {} })),
       ]);
+      if (consultaContextStale(seq, folio)) return;
 
       const r = det.record || {};
       const nombrePadron = [r.derc_nombre, r.derc_appaterno, r.derc_apmaterno]
@@ -2899,7 +2985,9 @@ async function loadConsultaContext(force = false) {
       if (preData.sexo) citaCtx.sexo = String(preData.sexo).startsWith("MASC") ? "M" : citaCtx.sexo;
 
       await loadNotaGrabada();
+      if (consultaContextStale(seq, folio)) return;
       await loadHistorialPaciente();
+      if (consultaContextStale(seq, folio)) return;
 
       if (!notaBloqueada.value) {
         consulta.sintomas = String(preData.sintomas || consulta.sintomas || "");
@@ -2935,22 +3023,27 @@ async function loadConsultaContext(force = false) {
       } else {
         antecedentesVisitados.value = true;
       }
-      consultaLoadedFolio.value = citaCtx.hosi_folio;
-      signos.hosi_folio = Number(citaCtx.hosi_folio || consulta.hosi_folio || 0);
+      consultaLoadedFolio.value = folio;
+      signos.hosi_folio = folio || Number(consulta.hosi_folio || 0);
       await loadUltimosSignos();
+      if (consultaContextStale(seq, folio)) return;
       if (consultaTieneSignos.value) {
         copiarUltimosSignos();
+      } else {
+        limpiarSignosCaptura();
       }
       if (!notaBloqueada.value) {
         syncSignosEnPlan(bloquePlanAutomatico());
       }
       await loadRecetasConsulta();
+      if (consultaContextStale(seq, folio)) return;
       // Host: habilitar/deshabilitar botón Solicitudes (Forma 11-5).
       emit("consultaGuardada", {
-        hosi_folio: Number(citaCtx.hosi_folio || 0),
+        hosi_folio: folio,
         saved: Boolean(notaBloqueada.value),
       });
     } catch (e) {
+      if (consultaContextStale(seq, folio)) return;
       error.value = e instanceof Error ? e.message : "Error cargando datos del paciente";
     }
   })();
@@ -2972,49 +3065,7 @@ function limpiarConsulta() {
     error.value = "La nota ya está grabada; no se puede limpiar ni modificar.";
     return;
   }
-  consultaOkLocal.value = false;
-  consulta.sintomas = "";
-  consulta.objetivo = "";
-  consulta.analisis = "";
-  consulta.plan = "";
-  consulta.diai_clacie1 = "";
-  consulta.diai_clacie2 = "";
-  consulta.diai_clacie3 = "";
-  consulta.diai_clacie4 = "";
-  consulta.diai_clacie5 = "";
-  consulta.motivoCie10 = "";
-  consulta.motivoConsulta = "";
-  consulta.diagnosticoTexto = "";
-  consulta.diagnosticoTexto2 = "";
-  consulta.diagnosticoTexto3 = "";
-  consulta.diagnosticoTexto4 = "";
-  consulta.diagnosticoTexto5 = "";
-  consulta.enfermedadPrimeraVez = false;
-  consulta.enfermedadSub = false;
-  consulta.conn_tipocon = "";
-  tipoconMotivo.value = "";
-  dxSlotsVisible.value = 1;
-  dxQ.value = "";
-  dxPendiente.value = null;
-  motivoQ.value = "";
-  motivoPendiente.value = null;
-  consultaLoadedFolio.value = 0;
-  notaCronica.diabetes = "negativo";
-  notaCronica.diabetesTipo = "";
-  notaCronica.hipertension = "negativo";
-  notaCronica.obesidad = "negativo";
-  notaCronica.alergias = "negativo";
-  notaCronica.alergiasDetalle = "";
-  alergiasLista.value = [];
-  alergiaNueva.value = "";
-  syncingAlergiaCatalogoSel.value = true;
-  alergiaCatalogoSel.value = [];
-  syncingAlergiaCatalogoSel.value = false;
-  alergiaOtroTexto.value = "";
-  antecedentesVisitados.value = false;
-  procedimientosSel.value = [];
-  procQ.value = "";
-  procPendiente.value = null;
+  resetConsultaCaptura();
 }
 
 function openExpedienteConsulta() {
@@ -3032,20 +3083,24 @@ function openExpedienteConsulta() {
 }
 
 async function loadHistorialPaciente() {
-  if (!citaCtx.ficha) {
+  const ficha = String(citaCtx.ficha || "").trim();
+  const folio = Number(citaCtx.hosi_folio || 0);
+  if (!ficha) {
     historialNotas.value = [];
     return;
   }
   try {
     const data = await post<{ rows: Record<string, unknown>[] }>("/sub/atmed/notas/historial", {
       ...props.session,
-      ficha: citaCtx.ficha,
+      ficha,
       codigo: citaCtx.codigo || "00",
       empresa: citaCtx.empresa || 0,
       limit: 10,
     });
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     historialNotas.value = (data.rows || []).slice(0, 10);
   } catch {
+    if (Number(citaCtx.hosi_folio || 0) !== folio) return;
     historialNotas.value = [];
   }
 }
@@ -3370,6 +3425,7 @@ watch(
 );
 
 watch(tab, async (t) => {
+  emit("update:module", t);
   if (t === "consulta" && !puedeClinica.value) {
     tab.value = "agenda";
     error.value = "Su rol no tiene acceso a la consulta clínica.";
@@ -3391,8 +3447,8 @@ watch(tab, async (t) => {
 });
 
 watch(
-  () => props.initialModule,
-  (mod) => {
+  () => [props.initialModule, props.moduleNonce] as const,
+  ([mod]) => {
     if (!mod) return;
     if (mod === "consulta" && !puedeClinica.value) return;
     tab.value = mod;
@@ -3410,11 +3466,6 @@ watch(okMsg, (msg) => {
   if (!msg) return;
   notifySuccess(msg);
   okMsg.value = "";
-});
-
-watch(asignarOkFolio, (folio) => {
-  if (!folio) return;
-  notifySuccess(`Cita registrada. Folio de cita médica: ${folio}`, "Cita grabada");
 });
 
 onMounted(async () => {
@@ -4975,6 +5026,37 @@ onMounted(async () => {
         </div>
       </main>
     </div>
+
+    <UModal
+      v-model:open="otraCitaOpen"
+      :dismissible="false"
+      :ui="{ content: 'max-w-md w-full' }"
+    >
+      <template #content>
+        <div class="space-y-3 p-4">
+          <h3 class="text-sm font-bold uppercase text-highlighted m-0">Cita grabada</h3>
+          <p v-if="otraCitaFolio" class="text-sm m-0">
+            Folio de cita médica: <strong>{{ otraCitaFolio }}</strong>
+          </p>
+          <p class="text-sm m-0">¿DESEA REGISTRAR OTRA CITA?</p>
+          <div class="flex justify-end gap-2">
+            <UButton
+              label="No"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              @click="confirmarOtraCita(false)"
+            />
+            <UButton
+              label="Sí"
+              color="primary"
+              size="sm"
+              @click="confirmarOtraCita(true)"
+            />
+          </div>
+        </div>
+      </template>
+    </UModal>
 
     <UModal v-model:open="censoAltaOpen" :ui="{ content: 'max-w-md w-full' }">
       <template #content>
