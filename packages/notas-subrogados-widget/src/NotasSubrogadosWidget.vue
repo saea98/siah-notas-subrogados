@@ -409,7 +409,7 @@ function setTipoConsulta(primeraVez: boolean, motivo?: string) {
   consulta.enfermedadSub = !primeraVez;
   consulta.conn_tipocon = primeraVez ? "P" : "S";
   tipoconMotivo.value = motivo ?? "Marcado manualmente por el médico";
-  syncSignosEnPlan(bloquePlanAutomatico());
+  syncSignosEnPlan();
 }
 
 async function aplicarTipoconSugerido(cie?: string) {
@@ -1034,11 +1034,6 @@ function formatSignosResumenLinea(s: {
   ].join(" ");
 }
 
-// Bloque canónico (campos fijos). No usar [^\n]*: el resumen va en una sola línea
-// y, al partirse visualmente, el texto del médico queda en medio y se tragaba.
-const SIGNOS_PLAN_CANON_RE =
-  /^SIGNOS VITALES:\s*PULSO:\s*\S+\s+RESPIRACION:\s*\S+\s+TENSION ARTERIAL:\s*\S+\s+mmHg(?:\s*\([^)]+\))?\s+TEMPERATURA:\s*\S+\s+°C\s+PESO:\s*\S+\s+KG\s+ESTATURA:\s*\S+\s+M\s+IMC:\s*\S+\s+KG\/M[²2]?(?:\s*\([^)]+\))?\s+PERIMETRO ABDOMINAL:\s*\S+\s+CMS\s+SATURACION O2:\s*\S+\s*%/im;
-
 function bloquePlanAutomatico(): string {
   if (
     !ultimosSignos.value ||
@@ -1049,44 +1044,39 @@ function bloquePlanAutomatico(): string {
   return formatSignosResumenLinea(ultimosSignos.value);
 }
 
-/** Texto del plan que sí es del médico (sin el resumen automático de signos). */
+/**
+ * Misma regla que FastAPI `_SIGNOS_PLAN_RE`: una línea que empieza con
+ * SIGNOS VITALES: PULSO: … SATURACION O2: … %. El `.` no cruza saltos de línea.
+ */
+const SIGNOS_PLAN_LINE_RE =
+  /^SIGNOS VITALES:\s*PULSO:.*SATURACION O2:\s*\S+\s*%/gim;
+const PRECARGA_PLAN_RE = /CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ)/gi;
+
+/** Texto clínico del plan, sin el resumen automático de signos. Conserva saltos de línea. */
 function planTextoPropio(text: string, block = ""): string {
   let t = String(text || "");
   const b = String(block || "").trim();
   if (b && t.includes(b)) {
-    return t.split(b).join(" ").replace(/\s+/g, " ").trim();
+    t = t.split(b).join("\n");
   }
-  const canon = t.match(SIGNOS_PLAN_CANON_RE);
-  if (canon && canon.index != null) {
-    return `${t.slice(0, canon.index)} ${t.slice(canon.index + canon[0].length)}`
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-  if (!/SIGNOS VITALES:/i.test(t)) return t.trim();
-  let rest = t.replace(/SIGNOS VITALES:/gi, " ");
-  rest = rest.replace(
-    /\b(PULSO|RESPIRACION|TENSION ARTERIAL|TEMPERATURA|PESO|ESTATURA|IMC|PERIMETRO ABDOMINAL|SATURACION O2)\s*:/gi,
-    " ",
-  );
-  rest = rest.replace(/\bmmHg\b/gi, " ");
-  rest = rest.replace(/°C/g, " ");
-  rest = rest.replace(/KG\/M[²2]?/gi, " ");
-  rest = rest.replace(/\bCMS\b/gi, " ");
-  rest = rest.replace(/\bKG\b/gi, " ");
-  rest = rest.replace(/%/g, " ");
-  rest = rest.replace(/\([^)]*\)/g, " ");
-  rest = rest.replace(/\b[\d.,/—\-]+\b/g, " ");
-  rest = rest.replace(/(^|\s)M(\s|$)/g, " ");
-  return rest.replace(/\s+/g, " ").trim();
+  SIGNOS_PLAN_LINE_RE.lastIndex = 0;
+  t = t.replace(SIGNOS_PLAN_LINE_RE, "");
+  return t.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Signos en la primera línea + plan clínico debajo (así lo cuenta FastAPI). */
+function componerPlanParaGrabar(resumen?: string): string {
+  const block = (resumen ?? bloquePlanAutomatico()).trim();
+  const propio = planTextoPropio(consulta.plan || "", block);
+  if (block && propio) return `${block}\n${propio}`;
+  if (block) return `${block}\n`;
+  return propio;
 }
 
 function syncSignosEnPlan(resumen?: string) {
   if (notaBloqueada.value) return;
-  const block = (resumen ?? bloquePlanAutomatico()).trim();
-  const propio = planTextoPropio(consulta.plan || "", block);
-  if (block && propio) consulta.plan = `${block}\n${propio}`;
-  else if (block) consulta.plan = `${block}\n`;
-  else consulta.plan = propio;
+  const next = componerPlanParaGrabar(resumen);
+  if (consulta.plan !== next) consulta.plan = next;
 }
 
 const signosTensionClasificacion = computed(() =>
@@ -1313,6 +1303,8 @@ function soapLen(text: string, campo: "sintomas" | "objetivo" | "analisis" | "pl
   if (campo === "analisis") t = t.replace(PRECARGA_ANALISIS_RE, "");
   if (campo === "plan") {
     t = planTextoPropio(t, bloquePlanAutomatico());
+    PRECARGA_PLAN_RE.lastIndex = 0;
+    t = t.replace(PRECARGA_PLAN_RE, "");
   }
   return t.trim().length;
 }
@@ -3257,6 +3249,7 @@ async function doConsulta() {
     revealConsultaErrorTab();
     return;
   }
+  syncSignosEnPlan();
   if (!soapCompleto.value) {
     error.value =
       `SOAP incompleto: cada campo requiere al menos ${SOAP_MIN_CHARS} caracteres además de la información precargada. Faltan: ${soapFaltantes.value.join(", ")}`;
@@ -3296,7 +3289,7 @@ async function grabarConsultaConfirmada() {
       sintomas: consulta.sintomas,
       objetivo: consulta.objetivo,
       analisis: consulta.analisis,
-      plan: consulta.plan,
+      plan: componerPlanParaGrabar(),
       diai_clacie1: consulta.diai_clacie1,
       diai_clacie2: consulta.diai_clacie2,
       diai_clacie3: consulta.diai_clacie3,
@@ -3388,8 +3381,7 @@ async function doSignos() {
         saturacion: signos.saturacion,
       };
     }
-    const resumen = formatSignosResumenLinea(signos);
-    syncSignosEnPlan(resumen);
+    syncSignosEnPlan(formatSignosResumenLinea(signos));
     const ta = clasificacionTension(signos.tension_sis, signos.tension_dia);
     if (ta === "HIPERTENSO" && notaCronica.hipertension === "negativo") {
       notaCronica.hipertension = "positivo";
@@ -4440,30 +4432,30 @@ onMounted(async () => {
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Cardiovascular</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Pulso *<div class="siah-input-unit"><input v-model="signos.pulso" inputmode="numeric" placeholder="30–200" :disabled="signosCapturaBloqueada" aria-label="Pulso"><span>lpm</span></div></label>
-                        <label class="siah-field">TA sistólica *<div class="siah-input-unit"><input v-model="signos.tension_sis" inputmode="numeric" placeholder="0–350" :disabled="signosCapturaBloqueada" aria-label="TA sistólica"><span>mmHg</span></div></label>
-                        <label class="siah-field">TA diastólica *<div class="siah-input-unit"><input v-model="signos.tension_dia" inputmode="numeric" placeholder="0–200" :disabled="signosCapturaBloqueada" aria-label="TA diastólica"><span>mmHg</span></div></label>
+                        <label class="siah-field">Pulso *<div class="siah-input-unit"><input v-model="signos.pulso" inputmode="numeric" placeholder="40–210" :disabled="signosCapturaBloqueada" aria-label="Pulso"><span>lpm</span></div></label>
+                        <label class="siah-field">TA sistólica *<div class="siah-input-unit"><input v-model="signos.tension_sis" inputmode="numeric" placeholder="40–300" :disabled="signosCapturaBloqueada" aria-label="TA sistólica"><span>mmHg</span></div></label>
+                        <label class="siah-field">TA diastólica *<div class="siah-input-unit"><input v-model="signos.tension_dia" inputmode="numeric" placeholder="20–200" :disabled="signosCapturaBloqueada" aria-label="TA diastólica"><span>mmHg</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Respiratorio</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Frecuencia respiratoria *<div class="siah-input-unit"><input v-model="signos.respiracion" inputmode="numeric" placeholder="5–100" :disabled="signosCapturaBloqueada" aria-label="Frecuencia respiratoria"><span>rpm</span></div></label>
+                        <label class="siah-field">Frecuencia respiratoria *<div class="siah-input-unit"><input v-model="signos.respiracion" inputmode="numeric" placeholder="12–60" :disabled="signosCapturaBloqueada" aria-label="Frecuencia respiratoria"><span>rpm</span></div></label>
                         <label class="siah-field">Saturación de O₂<div class="siah-input-unit"><input v-model="signos.saturacion" inputmode="numeric" placeholder="50–100" :disabled="signosCapturaBloqueada" aria-label="Saturación de O₂"><span>%</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Temperatura</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Temperatura *<div class="siah-input-unit"><input v-model="signos.temperatura" inputmode="decimal" placeholder="15–50" :disabled="signosCapturaBloqueada" aria-label="Temperatura"><span>°C</span></div></label>
+                        <label class="siah-field">Temperatura *<div class="siah-input-unit"><input v-model="signos.temperatura" inputmode="decimal" placeholder="25–45" :disabled="signosCapturaBloqueada" aria-label="Temperatura"><span>°C</span></div></label>
                       </div>
                     </div>
                     <div class="siah-vital-group">
                       <div class="siah-group-title">Antropometría</div>
                       <div class="siah-vital-grid">
-                        <label class="siah-field">Peso *<div class="siah-input-unit"><input v-model="signos.peso" inputmode="decimal" placeholder="0.5–250" :disabled="signosCapturaBloqueada" aria-label="Peso"><span>kg</span></div></label>
-                        <label class="siah-field">Estatura *<div class="siah-input-unit"><input v-model="signos.estatura" inputmode="decimal" placeholder="0.1–2.5" :disabled="signosCapturaBloqueada" aria-label="Estatura"><span>m</span></div></label>
-                        <label class="siah-field">Perímetro abdominal<div class="siah-input-unit"><input v-model="signos.abdominal" inputmode="numeric" placeholder="15–500" :disabled="signosCapturaBloqueada" aria-label="Perímetro abdominal"><span>cm</span></div></label>
+                        <label class="siah-field">Peso *<div class="siah-input-unit"><input v-model="signos.peso" inputmode="decimal" placeholder="0.5–350" :disabled="signosCapturaBloqueada" aria-label="Peso"><span>kg</span></div></label>
+                        <label class="siah-field">Estatura *<div class="siah-input-unit"><input v-model="signos.estatura" inputmode="decimal" placeholder="0.30–2.50" :disabled="signosCapturaBloqueada" aria-label="Estatura"><span>m</span></div></label>
+                        <label class="siah-field">Perímetro abdominal<div class="siah-input-unit"><input v-model="signos.abdominal" inputmode="numeric" placeholder="20–250" :disabled="signosCapturaBloqueada" aria-label="Perímetro abdominal"><span>cm</span></div></label>
                       </div>
                     </div>
                     <div v-if="signosImc != null" class="siah-imc-banner" role="status">
@@ -4627,7 +4619,7 @@ onMounted(async () => {
               <div v-show="consultaUiTab === 'clinical'" class="siah-tab-panel" role="tabpanel">
             <AtmedSectionCard title="Motivo de consulta">
               <p class="siah-helper">
-                Busque el CIE-10, selecciónelo y pulse Agregar. CIE-10 y motivo se llenan solos y no se editan a mano.
+                Busque el CIE-10, selecciónelo y pulse Agregar.
               </p>
               <div class="space-y-3">
                 <div class="flex w-full flex-nowrap items-end gap-2">
@@ -4681,11 +4673,6 @@ onMounted(async () => {
             </AtmedSectionCard>
 
             <AtmedSectionCard title="Nota clínica">
-              <p class="siah-helper">
-                Mínimo {{ SOAP_MIN_CHARS }} caracteres propios en Síntomas, Objetivo, Análisis y Plan.
-                No cuenta el texto precargado de síntomas/alergias ni el bloque automático de signos vitales.
-                <span v-if="notaBloqueada"> Solo lectura.</span>
-              </p>
               <p v-if="soapBloqueadoSinSignos" class="siah-helper" style="color: #aa6600">
                 Capture signos vitales antes de editar Síntomas y Objetivo.
               </p>
