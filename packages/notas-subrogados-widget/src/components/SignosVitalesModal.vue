@@ -40,17 +40,18 @@ withDefaults(
     ultimosFechaLabel: string;
     /** Nota clínica ya grabada: captura en solo lectura. */
     readOnly?: boolean;
-    /** Bloquea copiar antecedente (p. ej. ya hay signos del folio actual). */
-    copyDisabled?: boolean;
   }>(),
-  { readOnly: false, copyDisabled: false },
+  { readOnly: false },
 );
 
 const emit = defineEmits<{
   graba: [];
-  copiar: [];
   close: [];
 }>();
+
+const signosPhUi = {
+  base: "placeholder:text-muted/30 placeholder:italic",
+};
 </script>
 
 <template>
@@ -81,18 +82,18 @@ const emit = defineEmits<{
               <span class="text-xs font-bold uppercase tracking-wide text-inverted">Registro de signos vitales</span>
             </template>
 
-            <div class="grid gap-2">
+            <div class="grid gap-2 siah-signos-captura">
               <UFormField label="Pulso *" required>
-                <UInput v-model="signos.pulso" inputmode="numeric" size="sm" placeholder="40–210" :disabled="readOnly" />
+                <UInput v-model="signos.pulso" inputmode="numeric" size="sm" placeholder="40–210" :disabled="readOnly" :ui="signosPhUi" />
               </UFormField>
               <UFormField label="Resp x min *" required>
-                <UInput v-model="signos.respiracion" inputmode="numeric" size="sm" placeholder="12–60" :disabled="readOnly" />
+                <UInput v-model="signos.respiracion" inputmode="numeric" size="sm" placeholder="12–60" :disabled="readOnly" :ui="signosPhUi" />
               </UFormField>
               <UFormField label="Tensión arterial *" required>
                 <div class="flex items-center gap-2">
-                  <UInput v-model="signos.tension_sis" inputmode="numeric" size="sm" class="flex-1" placeholder="40–300" :disabled="readOnly" />
+                  <UInput v-model="signos.tension_sis" inputmode="numeric" size="sm" class="flex-1" placeholder="40–300" :disabled="readOnly" :ui="signosPhUi" />
                   <span class="text-muted">/</span>
-                  <UInput v-model="signos.tension_dia" inputmode="numeric" size="sm" class="flex-1" placeholder="20–200" :disabled="readOnly" />
+                  <UInput v-model="signos.tension_dia" inputmode="numeric" size="sm" class="flex-1" placeholder="20–200" :disabled="readOnly" :ui="signosPhUi" />
                 </div>
               </UFormField>
               <UFormField label="Clasificación TA">
@@ -109,13 +110,13 @@ const emit = defineEmits<{
                 />
               </UFormField>
               <UFormField label="Temp (°C) *" required>
-                <UInput v-model="signos.temperatura" inputmode="decimal" size="sm" placeholder="25–45" :disabled="readOnly" />
+                <UInput v-model="signos.temperatura" inputmode="decimal" size="sm" placeholder="25–45" :disabled="readOnly" :ui="signosPhUi" />
               </UFormField>
               <UFormField label="Peso (kg) *" required>
-                <UInput v-model="signos.peso" inputmode="decimal" size="sm" placeholder="0.5–350" :disabled="readOnly" />
+                <UInput v-model="signos.peso" inputmode="decimal" size="sm" placeholder="0.5–350" :disabled="readOnly" :ui="signosPhUi" />
               </UFormField>
               <UFormField label="Estatura (m) *" required>
-                <UInput v-model="signos.estatura" inputmode="decimal" size="sm" placeholder="0.30–2.50" :disabled="readOnly" />
+                <UInput v-model="signos.estatura" inputmode="decimal" size="sm" placeholder="0.30–2.50" :disabled="readOnly" :ui="signosPhUi" />
               </UFormField>
               <UFormField label="I.M.C">
                 <UInput :model-value="signosImc ?? '—'" readonly size="sm" />
@@ -132,10 +133,10 @@ const emit = defineEmits<{
                 <UInput model-value="N/A" readonly size="sm" />
               </UFormField>
               <UFormField label="P. abdominal (cm)">
-                <UInput v-model="signos.abdominal" inputmode="numeric" size="sm" placeholder="20–250" :disabled="readOnly" />
+                <UInput v-model="signos.abdominal" inputmode="numeric" size="sm" placeholder="20–250" :disabled="readOnly" :ui="signosPhUi" />
               </UFormField>
               <UFormField label="Sat. O₂ (%)">
-                <UInput v-model="signos.saturacion" inputmode="numeric" size="sm" placeholder="50–100" :disabled="readOnly" />
+                <UInput v-model="signos.saturacion" inputmode="numeric" size="sm" placeholder="50–100" :disabled="readOnly" :ui="signosPhUi" />
               </UFormField>
             </div>
           </UCard>
@@ -205,16 +206,6 @@ const emit = defineEmits<{
               <UFormField label="Sat. O₂ (%)">
                 <UInput :model-value="ultimosSignos.saturacion ?? '—'" readonly size="sm" />
               </UFormField>
-              <UButton
-                v-if="ultimosSignos"
-                label="Copiar última toma a captura"
-                variant="soft"
-                color="primary"
-                size="xs"
-                block
-                :disabled="readOnly || copyDisabled"
-                @click="emit('copiar')"
-              />
             </div>
           </UCard>
         </div>
@@ -234,3 +225,11 @@ const emit = defineEmits<{
     </template>
   </UModal>
 </template>
+
+<style scoped>
+.siah-signos-captura :deep(input::placeholder) {
+  color: var(--ui-text-muted, #94a3b8);
+  opacity: 0.38;
+  font-style: italic;
+}
+</style>

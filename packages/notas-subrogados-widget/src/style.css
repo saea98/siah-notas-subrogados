@@ -1,4 +1,4 @@
-/* Tokens clínicos alineados a .siah/prototipos/Widgets/Notas */
+﻿/* Tokens clínicos alineados a .siah/prototipos/Widgets/Notas */
 .siah-atmed-widget {
   --siah-green: #006b44;
   --siah-ink: #172344;
@@ -7,6 +7,7 @@
   --siah-bg: #f6f8fb;
   --siah-card: #ffffff;
   --siah-input-border: #d3ddea;
+  position: relative;
   min-width: 0;
   color: var(--siah-ink);
   font: 14px/1.5 Arial, Helvetica, sans-serif;
@@ -493,7 +494,7 @@
 .siah-atmed-widget .siah-vital-column {
   border: 1px solid var(--siah-line);
   border-radius: 7px;
-  overflow: hidden;
+  overflow: clip;
   background: white;
 }
 
@@ -581,6 +582,12 @@
 
 .siah-atmed-widget .siah-input-unit input:focus {
   outline: none;
+}
+
+.siah-atmed-widget .siah-input-unit input::placeholder {
+  color: var(--siah-muted);
+  opacity: 0.38;
+  font-style: italic;
 }
 
 .siah-atmed-widget .siah-input-unit span {
@@ -831,6 +838,26 @@
   border-bottom: 1px solid var(--siah-line);
   white-space: nowrap;
   color: var(--siah-ink);
+}
+
+.siah-atmed-widget .siah-consulta-ficha th.siah-dx-tipo,
+.siah-atmed-widget .siah-consulta-ficha td.siah-dx-tipo {
+  text-align: center;
+  width: 1%;
+  vertical-align: middle;
+}
+
+.siah-atmed-widget .siah-consulta-ficha td.siah-dx-tipo input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--siah-green);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.siah-atmed-widget .siah-consulta-ficha td.siah-dx-tipo input[type="checkbox"]:disabled {
+  cursor: not-allowed;
 }
 
 .siah-atmed-widget .siah-consulta-ficha td.siah-historial-wrap {
@@ -1328,7 +1355,7 @@
 }
 
 .siah-atmed-widget .siah-drawer-patient {
-  font-size: 18px;
+  font-size: calc(18px - 1.5pt);
   font-weight: 700;
   line-height: 1.5;
   margin: 15px 0 6px;
@@ -1391,7 +1418,7 @@
 }
 
 .siah-atmed-widget .siah-patient-ident strong {
-  font-size: 14px;
+  font-size: calc(14px - 1.5pt);
   display: block;
 }
 
@@ -1685,5 +1712,402 @@
   .siah-atmed-widget .siah-note-tabs-layout .siah-vital-columns,
   .siah-atmed-widget .siah-note-tabs-layout .siah-vital-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Modal historial de nota — prototipo compacto (teleport al body) */
+.siah-nm-shell {
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  box-shadow: 0 24px 80px #1723442b;
+}
+
+.siah-nm {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100dvh - 28px);
+  color: #172344;
+  font: 13px/1.4 Arial, Helvetica, sans-serif;
+  background: #fff;
+}
+
+.siah-nm__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid #dfe6ef;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.siah-nm__title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.siah-nm__heading-icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cfe1d6;
+  background: #edf6f0;
+  border-radius: 6px;
+  color: #006b44;
+  flex-shrink: 0;
+}
+
+.siah-nm__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #006b44;
+  letter-spacing: -0.2px;
+}
+
+.siah-nm__readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #edf3f7;
+  color: #5a7087;
+  font-weight: 600;
+  font-size: 9px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+}
+
+.siah-nm__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #718099;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.siah-nm__bullet {
+  color: #bec8d1;
+}
+
+.siah-nm__close {
+  border: 0;
+  background: #f3f6f7;
+  padding: 6px;
+  display: grid;
+  place-items: center;
+  color: #6b7d8e;
+  flex-shrink: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.siah-nm__close:hover {
+  background: #e8eef2;
+}
+
+.siah-nm__scroll {
+  overflow: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+  background: #f8fafb;
+  scrollbar-width: thin;
+}
+
+.siah-nm__summary {
+  padding: 8px 16px;
+  background: #fff;
+  border-bottom: 1px solid #dfe6ef;
+}
+
+.siah-nm__unit {
+  font-size: 11px;
+  color: #6b7c8f;
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.siah-nm__diagnosis {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.siah-nm__code {
+  font-size: 12px;
+  background: #e5f1ea;
+  color: #006b44;
+  border: 1px solid #d1e4d9;
+  padding: 4px 7px;
+  border-radius: 5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.siah-nm__diagnosis small {
+  display: block;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #718099;
+  margin-bottom: 2px;
+}
+
+.siah-nm__diagnosis strong {
+  font-size: 12px;
+  color: #172344;
+}
+
+.siah-nm__content {
+  padding: 10px 16px 12px;
+}
+
+.siah-nm__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.siah-nm__clinical {
+  background: #fff;
+  border: 1px solid #dfe6ef;
+  border-radius: 7px;
+  padding: 0 12px;
+}
+
+.siah-nm__section {
+  padding: 8px 0;
+  border-bottom: 1px solid #e9eef2;
+}
+
+.siah-nm__section:last-child {
+  border-bottom: 0;
+}
+
+.siah-nm__section h3 {
+  font-size: 11px;
+  color: #006b44;
+  margin: 0 0 4px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 700;
+}
+
+.siah-nm__letter {
+  font-size: 9px;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: #edf5f0;
+  color: #56846c;
+  font-weight: 700;
+}
+
+.siah-nm__section p {
+  margin: 0;
+  font-size: 12px;
+  color: #34445b;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.siah-nm__plain {
+  font-size: 10px !important;
+  color: #718099 !important;
+  margin-top: 4px !important;
+}
+
+.siah-nm__right {
+  border: 1px solid #dfe6ef;
+  border-radius: 7px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.siah-nm__right h3 {
+  font-size: 12px;
+  color: #006b44;
+  margin: 0;
+  font-weight: 700;
+}
+
+.siah-nm__right > p {
+  font-size: 10px;
+  color: #718099;
+  line-height: 1.4;
+  margin: 3px 0 8px;
+}
+
+.siah-nm__empty-vitals {
+  margin: 0 !important;
+  font-size: 11px;
+  color: #718099;
+}
+
+.siah-nm__vital-cat {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #8290a2;
+  margin: 8px 0 4px;
+}
+
+.siah-nm__vitals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.siah-nm__vital {
+  padding: 6px 8px;
+  background: #f7f9fb;
+  border: 1px solid #e9eef3;
+  border-radius: 5px;
+  min-width: 0;
+}
+
+.siah-nm__vital small {
+  display: block;
+  color: #6b7c90;
+  font-size: 10px;
+  margin-bottom: 3px;
+  line-height: 1.25;
+}
+
+.siah-nm__value {
+  font-weight: 700;
+  font-size: 13px;
+  color: #293e56;
+  white-space: nowrap;
+}
+
+.siah-nm__value span {
+  font-weight: 400;
+  font-size: 10px;
+  color: #78889c;
+  margin-left: 3px;
+}
+
+.siah-nm__note {
+  font-size: 9px;
+  color: #718099;
+  display: block;
+  margin-top: 2px;
+}
+
+.siah-nm__vital--span {
+  grid-column: 1 / -1;
+}
+
+.siah-nm__addendum {
+  background: #fff;
+  border: 1px solid #dfe6ef;
+  border-radius: 7px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.siah-nm__addendum-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f1f5f8;
+  border-bottom: 1px solid #e5ebf0;
+}
+
+.siah-nm__addendum h3 {
+  color: #526b81;
+  font-size: 11px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.siah-nm__addendum time {
+  font-size: 10px;
+  color: #73849a;
+}
+
+.siah-nm__addendum p {
+  padding: 8px 12px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #34445b;
+}
+
+.siah-nm__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-top: 1px solid #dfe6ef;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.siah-nm__footer span {
+  font-size: 10px;
+  color: #8190a1;
+}
+
+.siah-nm__primary {
+  min-width: 80px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #006b44;
+  border: 1px solid #006b44;
+  color: #fff;
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.siah-nm__primary:hover {
+  background: #005536;
+}
+
+@media (max-width: 750px) {
+  .siah-nm__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .siah-nm__header,
+  .siah-nm__summary,
+  .siah-nm__content,
+  .siah-nm__footer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .siah-nm__title {
+    font-size: 16px;
+  }
+
+  .siah-nm__addendum-head {
+    flex-wrap: wrap;
+  }
+
+  .siah-nm__footer span {
+    max-width: 160px;
+    line-height: 1.4;
   }
 }

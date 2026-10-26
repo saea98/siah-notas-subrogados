@@ -5,6 +5,7 @@ import AtmedDatePicker from "./components/AtmedDatePicker.vue";
 import CatalogAutocomplete from "./components/CatalogAutocomplete.vue";
 import SignosVitalesModal from "./components/SignosVitalesModal.vue";
 import ServiciosModal from "./components/ServiciosModal.vue";
+import SiahHeartBusy from "./components/SiahHeartBusy.vue";
 import "./style.css";
 import type { SessionAuth } from "./types";
 
@@ -119,6 +120,7 @@ const emit = defineEmits<{
       empresa?: number;
       hosi_folio?: number;
       unitrab?: number | string;
+      origen?: "agenda" | "asignar" | "consulta";
     },
   ];
   openReceta: [
@@ -166,9 +168,9 @@ const puedeClinica = computed(() => !["R", "F"].includes(sessionRol.value));
 /** Médico autenticado: no cambia de médico/especialidad ajenos. */
 const medicoSesionLocked = ref(false);
 const medicoSesionFicha = ref("");
-const tipoconMotivo = ref("");
 const citaEstatusCat = ref<{ cits_estatus: number; etiqueta: string }[]>([]);
 const loading = ref(false);
+const bootLoading = ref(true);
 const error = ref("");
 const okMsg = ref("");
 const rows = ref<Record<string, unknown>[]>([]);
@@ -403,12 +405,11 @@ function agregarMotivoConsulta() {
   motivoQ.value = "";
 }
 
-function setTipoConsulta(primeraVez: boolean, motivo?: string) {
+function setTipoConsulta(primeraVez: boolean) {
   if (notaBloqueada.value) return;
   consulta.enfermedadPrimeraVez = primeraVez;
   consulta.enfermedadSub = !primeraVez;
   consulta.conn_tipocon = primeraVez ? "P" : "S";
-  tipoconMotivo.value = motivo ?? "Marcado manualmente por el médico";
   syncSignosEnPlan();
 }
 
@@ -428,7 +429,7 @@ async function aplicarTipoconSugerido(cie?: string) {
     );
     const r = res.record || {};
     const tip = String(r.conn_tipocon || "P").toUpperCase().slice(0, 1) || "P";
-    setTipoConsulta(tip !== "S", String(r.motivo || res.mensaje || ""));
+    setTipoConsulta(tip !== "S");
   } catch {
     /* sugerencia opcional */
   }
@@ -716,7 +717,11 @@ function loadAlergiasListaFromTexto(txt: string) {
     .filter(Boolean)
     .filter((l) => {
       const u = l.toUpperCase();
-      return !u.includes("NO REGISTRADAS") && !u.startsWith("ANTECEDENTES CRONICOS");
+      return (
+        !u.includes("NO REGISTRAD") &&
+        !u.includes("ALERGIA REFERIDA") &&
+        !u.startsWith("ANTECEDENTES CRONICOS")
+      );
     })
     .flatMap((l) => {
       const m = l.match(/^PACIENTE REFIERE SER ALERGICO A\s+(.+)$/i);
@@ -760,7 +765,7 @@ function toggleCronico(campo: "diabetes" | "hipertension" | "obesidad" | "alergi
     syncingAlergiaCatalogoSel.value = false;
     alergiaOtroTexto.value = "";
     alergiasCatalogoError.value = "";
-    notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
+    notaCronica.alergiasDetalle = "";
   }
   if (campo === "alergias" && notaCronica.alergias === "positivo") {
     void loadAlergiasCatalogo("");
@@ -848,12 +853,24 @@ async function confirmarAltaCenso() {
   }
 }
 
-function lineaAlergias(): string {
-  if (notaCronica.alergias !== "positivo") return "ALERGIAS NO REGISTRADAS";
+function alergiasRegistradasTexto(): string {
+  if (notaCronica.alergias !== "positivo") return "";
   const det =
     alergiasLista.value.join(", ").trim() ||
-    (notaCronica.alergiasDetalle || "").replace(/\n+/g, ", ").trim() ||
-    "ALERGIA REFERIDA";
+    (notaCronica.alergiasDetalle || "").replace(/\n+/g, ", ").trim();
+  if (
+    !det ||
+    /NO\s+REGISTRAD/i.test(det) ||
+    /ALERGIA REFERIDA/i.test(det)
+  ) {
+    return "";
+  }
+  return det;
+}
+
+function lineaAlergias(): string {
+  const det = alergiasRegistradasTexto();
+  if (!det) return "";
   if (det.startsWith("PACIENTE REFIERE") || det.startsWith("ALERGIAS")) return det;
   return `PACIENTE REFIERE SER ALERGICO A ${det}`;
 }
@@ -873,9 +890,11 @@ function syncCronicosEnAnalisis() {
   }
   const linea = lineaAlergias();
   const analisis = consulta.analisis || "";
-  if (PRECARGA_ANALISIS_RE.test(analisis)) {
-    const resto = analisis.replace(PRECARGA_ANALISIS_RE, "").trim();
-    consulta.analisis = resto ? `${linea}\n${resto}` : linea;
+  PRECARGA_ANALISIS_LINE_RE.lastIndex = 0;
+  if (PRECARGA_ANALISIS_LINE_RE.test(analisis)) {
+    PRECARGA_ANALISIS_LINE_RE.lastIndex = 0;
+    const resto = analisis.replace(PRECARGA_ANALISIS_LINE_RE, "").replace(/^\n+/, "").trim();
+    consulta.analisis = linea ? (resto ? `${linea}\n${resto}` : linea) : resto;
   } else if (!analisis.trim()) {
     consulta.analisis = linea;
   }
@@ -1046,11 +1065,11 @@ function bloquePlanAutomatico(): string {
 
 /**
  * Misma regla que FastAPI `_SIGNOS_PLAN_RE`: una línea que empieza con
- * SIGNOS VITALES: PULSO: … SATURACION O2: … %. El `.` no cruza saltos de línea.
+ * SIGNOS VITALES: PULSO: … SATURACION O2: … %. No consume lo que el médico
+ * escriba en la misma línea después del %.
  */
 const SIGNOS_PLAN_LINE_RE =
-  /^SIGNOS VITALES:\s*PULSO:.*SATURACION O2:\s*\S+\s*%/gim;
-const PRECARGA_PLAN_RE = /CONSULTA DE (?:SEGUIMIENTO|PRIMERA VEZ)/gi;
+  /^SIGNOS VITALES:\s*PULSO:[^\n]*?SATURACION O2:\s*\S+\s*%/gim;
 
 /** Texto clínico del plan, sin el resumen automático de signos. Conserva saltos de línea. */
 function planTextoPropio(text: string, block = ""): string {
@@ -1216,6 +1235,35 @@ const empresasOptions = computed(() => {
   return base;
 });
 
+function empresaDeRegistro(row: Record<string, unknown> | null | undefined): number {
+  if (!row) return 0;
+  const raw = row.emp_clave ?? row.ders_empresa ?? row.empresa ?? 0;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function claveFichaPaciente(
+  ficha: string | number | null | undefined,
+  codigo: string | number | null | undefined,
+  empresa: string | number | null | undefined,
+): string {
+  const f = String(ficha ?? "").trim();
+  if (!f) return "—";
+  const cRaw = String(codigo ?? "00").trim() || "00";
+  const c = /^\d+$/.test(cRaw) ? cRaw.padStart(2, "0") : cRaw;
+  const eNum = Number(empresa ?? 0);
+  const e = Number.isFinite(eNum) ? String(eNum) : String(empresa ?? "0").trim() || "0";
+  return `${f}-${c}-${e}`;
+}
+
+const pacienteFichaClave = computed(() =>
+  claveFichaPaciente(asignar.ficha, asignar.codigo, asignar.empresa),
+);
+const citaFichaClave = computed(() =>
+  claveFichaPaciente(citaCtx.ficha, citaCtx.codigo, citaCtx.empresa),
+);
+const showBusy = computed(() => bootLoading.value || loading.value || paciente.loading);
+
 const horaLabel = computed(() => {
   const hit = horas.value.find((h) => h.hora === Number(asignar.hora));
   if (hit?.label) return hit.label.includes("HRS") ? hit.label : `${hit.label} h`;
@@ -1291,8 +1339,12 @@ const SOAP_MIN_CHARS = 20;
 
 const PRECARGA_SINTOMAS_RE =
   /SE TRATA DE\s+.+?OBESIDAD\/SOBREPESO\s+(?:NO\s+)?REGISTRADO\.?\s*/i;
+/** Prefijo automático: no consume el resto de la línea (el médico puede escribir a continuación). */
 const PRECARGA_ANALISIS_RE =
-  /(?:PACIENTE REFIERE SER ALERGICO A[^\n]*|ALERGIAS NO REGISTRADAS)\s*/i;
+  /(?:^|\n)(?:PACIENTE REFIERE SER ALERGICO A\s+|ALERGIAS NO REGISTRADAS\s*|ALERGIA REFERIDA\s*)/i;
+/** Línea completa de alergias para reemplazar/quitar la precarga en el textarea. */
+const PRECARGA_ANALISIS_LINE_RE =
+  /(?:PACIENTE REFIERE SER ALERGICO A[^\n]*|ALERGIAS NO REGISTRADAS|ALERGIA REFERIDA)\s*/gi;
 const MOTIVO_MARK_RE = /\[\[MC:[^\]]*\]\]/g;
 const ANTECEDENTES_RE = /ANTECEDENTES CRONICOS:[\s\S]*?(?:\n\n|$)/i;
 
@@ -1300,11 +1352,17 @@ function soapLen(text: string, campo: "sintomas" | "objetivo" | "analisis" | "pl
   let t = text || "";
   t = t.replace(MOTIVO_MARK_RE, "").replace(ANTECEDENTES_RE, "");
   if (campo === "sintomas") t = t.replace(PRECARGA_SINTOMAS_RE, "");
-  if (campo === "analisis") t = t.replace(PRECARGA_ANALISIS_RE, "");
+  if (campo === "analisis") {
+    const auto = lineaAlergias();
+    if (auto) {
+      const escaped = auto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      t = t.replace(new RegExp(`(?:^|\\n)${escaped}\\s*`, "i"), "\n");
+    }
+    PRECARGA_ANALISIS_RE.lastIndex = 0;
+    t = t.replace(PRECARGA_ANALISIS_RE, "\n");
+  }
   if (campo === "plan") {
     t = planTextoPropio(t, bloquePlanAutomatico());
-    PRECARGA_PLAN_RE.lastIndex = 0;
-    t = t.replace(PRECARGA_PLAN_RE, "");
   }
   return t.trim().length;
 }
@@ -1370,7 +1428,6 @@ watch(diagnosticoCapturado, (ok) => {
   consulta.enfermedadPrimeraVez = false;
   consulta.enfermedadSub = false;
   consulta.conn_tipocon = "";
-  tipoconMotivo.value = "";
 });
 
 function soapHint(n: number): string {
@@ -1495,11 +1552,6 @@ function copiarUltimosSignos() {
   signos.estatura = String(u.estatura ?? "");
   signos.abdominal = String(u.abdominal ?? "");
   signos.saturacion = String((u as SignosRow).saturacion ?? "");
-}
-
-/** Acción de UI deshabilitada de forma permanente (precarga interna usa copiarUltimosSignos). */
-function copiarAntecedenteDesdeUi() {
-  /* botón siempre bloqueado */
 }
 
 /** Contexto de la cita en uso (acomodo tipo siah-web). */
@@ -1909,15 +1961,45 @@ function revealConsultaErrorTab() {
   }
 }
 
-function calcEdad(fecnac: string): string {
-  if (!fecnac) return "";
-  const d = new Date(fecnac.slice(0, 10));
-  if (Number.isNaN(d.getTime())) return "";
+function parseFechaNacimiento(raw: unknown): Date | null {
+  const s = String(raw ?? "").trim();
+  if (!s || s.toUpperCase() === "NULL") return null;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const dt = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  const dmy = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})/);
+  if (dmy) {
+    const dt = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  const dt = new Date(s);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function calcEdad(fecnac: unknown): string {
+  const d = parseFechaNacimiento(fecnac);
+  if (!d) return "";
   const today = new Date();
   let age = today.getFullYear() - d.getFullYear();
   const m = today.getMonth() - d.getMonth();
   if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age -= 1;
-  return age >= 0 ? String(age) : "";
+  return age >= 0 && age < 130 ? String(age) : "";
+}
+
+function edadInformada(raw: unknown): string {
+  const n = String(raw ?? "").replace(/\s*(años|anios|año|anio)\s*$/i, "").trim();
+  if (!n || n === "0" || n.toUpperCase() === "NULL") return "";
+  const num = Number(n);
+  if (!Number.isFinite(num) || num < 1 || num >= 130) return "";
+  return String(Math.trunc(num));
+}
+
+/** Edad del padrón; si no viene, se calcula con la fecha de nacimiento. */
+function edadDesdeRegistro(r: Record<string, unknown>): string {
+  return edadInformada(r.derc_edad ?? r.edad)
+    || calcEdad(r.derd_fecnac ?? r.derc_fecnac ?? r.fecnac ?? r.fecha_nacimiento);
 }
 
 /** Muestra "39 años" aunque el origen ya traiga "AÑOS"/"años". */
@@ -2035,7 +2117,7 @@ function imprimirAgenda() {
           <td>${r.hosi_folio ?? ""}</td>
           <td>${formatHoraCelda(r.citn_hrcita)}</td>
           <td>${formatHoraCelda(r.cits_hrllegada) || "—"}</td>
-          <td>${r.derc_ficha ?? ""}</td>
+          <td>${claveFichaPaciente(r.derc_ficha, r.derc_codigo, empresaDeRegistro(r))}</td>
           <td>${r.paciente ?? ""}</td>
           <td>${r.especialidad ?? "—"}</td>
         </tr>`,
@@ -2056,8 +2138,9 @@ function openExpedienteFromAgenda(row: Record<string, unknown>) {
   emit("openExpediente", {
     ficha: String(row.derc_ficha || ""),
     codigo: String(row.derc_codigo || "00"),
-    empresa: Number(row.emp_clave ?? row.ders_empresa ?? 0),
+    empresa: empresaDeRegistro(row),
     hosi_folio: Number(row.hosi_folio),
+    origen: "agenda",
   });
 }
 
@@ -2264,6 +2347,135 @@ function lineaHistorialMain(row: Record<string, unknown> | null | undefined): st
   return parts.join(" · ") || "—";
 }
 
+const MESES_CORTO = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+function formatFechaHistorialLarga(value: unknown): string {
+  const iso = String(value || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return formatFechaNota(value);
+  const [y, mo, d] = iso.split("-");
+  const mes = MESES_CORTO[Number(mo) - 1] || "";
+  return `${Number(d)} ${mes} ${y}`;
+}
+
+function formatoFechaHoraHistorial(row: Record<string, unknown> | null | undefined): string {
+  if (!row) return "—";
+  const fecha = formatFechaHistorialLarga(row.cond_fechcon || row.fecha);
+  const hora = horaHistorial(row);
+  if (fecha !== "—" && hora !== "—") return `${fecha} · ${hora} h`;
+  return fecha !== "—" ? fecha : hora !== "—" ? `${hora} h` : "—";
+}
+
+function textoOGuion(value: unknown): string {
+  const t = String(value || "").trim();
+  return t || "—";
+}
+
+type HistorialVitales = {
+  pulso: string;
+  respiracion: string;
+  tension: string;
+  tensionClas: string;
+  temperatura: string;
+  peso: string;
+  estatura: string;
+  imc: string;
+  imcClas: string;
+  abdominal: string;
+  saturacion: string;
+};
+
+function parseSignosDePlan(plan: string): HistorialVitales | null {
+  SIGNOS_PLAN_LINE_RE.lastIndex = 0;
+  const m = String(plan || "").match(SIGNOS_PLAN_LINE_RE);
+  if (!m) return null;
+  const linea = m[0];
+  const ta = linea.match(/TENSION ARTERIAL:\s*(\S+)\s*mmHg(?:\s*\(([^)]+)\))?/i);
+  const imc = linea.match(/IMC:\s*(\S+)\s*KG\/M[²2](?:\s*\(([^)]+)\))?/i);
+  const vitales: HistorialVitales = {
+    pulso: linea.match(/PULSO:\s*(\S+)/i)?.[1] || "",
+    respiracion: linea.match(/RESPIRACION:\s*(\S+)/i)?.[1] || "",
+    tension: ta?.[1] || "",
+    tensionClas: ta?.[2] || "",
+    temperatura: linea.match(/TEMPERATURA:\s*(\S+)/i)?.[1] || "",
+    peso: linea.match(/PESO:\s*(\S+)/i)?.[1] || "",
+    estatura: linea.match(/ESTATURA:\s*(\S+)/i)?.[1] || "",
+    imc: imc?.[1] || "",
+    imcClas: imc?.[2] || "",
+    abdominal: linea.match(/PERIMETRO ABDOMINAL:\s*(\S+)/i)?.[1] || "",
+    saturacion: linea.match(/SATURACION O2:\s*(\S+)/i)?.[1] || "",
+  };
+  const hayDato = Object.values(vitales).some((v) => v && v !== "—");
+  return hayDato ? vitales : null;
+}
+
+type HistorialAdendum = { stamp: string; texto: string };
+
+const ADENDUM_BLOQUE_RE = /\[ADENDUM\s+([^\]]+)\]\s*([\s\S]*?)(?=\n\s*\[ADENDUM\s+|\s*$)/gi;
+
+function parseAdendumsDePlan(plan: string): HistorialAdendum[] {
+  const out: HistorialAdendum[] = [];
+  ADENDUM_BLOQUE_RE.lastIndex = 0;
+  let m: RegExpExecArray | null = ADENDUM_BLOQUE_RE.exec(plan || "");
+  while (m) {
+    const texto = String(m[2] || "").trim();
+    if (texto) {
+      const stampRaw = m[1].trim();
+      const stampMatch = stampRaw.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})/);
+      const stamp = stampMatch
+        ? `${formatFechaHistorialLarga(stampMatch[1])} · ${stampMatch[2]} h`
+        : stampRaw;
+      out.push({ stamp, texto });
+    }
+    m = ADENDUM_BLOQUE_RE.exec(plan || "");
+  }
+  return out;
+}
+
+function motivoDePlan(plan: string): string {
+  const m = /\[\[MC:([^|\]]*)\|([^\]]*)\]\]/.exec(plan || "");
+  if (!m) return "";
+  return [m[1], m[2]].map((p) => p.trim()).filter(Boolean).join(" — ");
+}
+
+function planClinicoHistorial(plan: string): string {
+  let t = String(plan || "");
+  SIGNOS_PLAN_LINE_RE.lastIndex = 0;
+  t = t.replace(SIGNOS_PLAN_LINE_RE, "");
+  ADENDUM_BLOQUE_RE.lastIndex = 0;
+  t = t.replace(ADENDUM_BLOQUE_RE, "");
+  t = t.replace(MOTIVO_MARK_RE, "");
+  return t.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function alergiasHistorialNota(row: Record<string, unknown> | null | undefined): string {
+  if (!row) return "—";
+  if (Array.isArray(row.alergias_lista) && row.alergias_lista.length) {
+    return row.alergias_lista.map((a) => String(a).trim()).filter(Boolean).join(", ");
+  }
+  return textoOGuion(row.alergias_texto);
+}
+
+const historialVista = computed(() => {
+  const row = historialNota.value;
+  if (!row) return null;
+  const plan = String(row.plan || "");
+  return {
+    fechaHora: formatoFechaHoraHistorial(row),
+    especialidad: textoOGuion(row.especialidad || row.servicio),
+    unidad: unidadHistorial(row),
+    cie: String(row.diai_clacie1 || row.cie2 || "").trim(),
+    diagnostico: String(row.diagnostico || row.diagnosticoConsulta || "").trim(),
+    sintomas: textoOGuion(row.sintomas),
+    objetivo: textoOGuion(row.objetivo),
+    analisis: textoOGuion(row.analisis),
+    alergias: alergiasHistorialNota(row),
+    plan: textoOGuion(planClinicoHistorial(plan)),
+    motivo: motivoDePlan(plan),
+    signos: parseSignosDePlan(plan),
+    adendums: parseAdendumsDePlan(plan),
+  };
+});
+
 function formatCitaHoraShort(hhmm: unknown): string {
   const n = Number(hhmm);
   if (!Number.isFinite(n)) return "";
@@ -2343,6 +2555,9 @@ function clearPaciente() {
   paciente.estatusVigencia = "";
   paciente.estatusCodigo = "";
   photoFailed.value = false;
+  photoError.value = "";
+  if (patientPhotoSrc.value.startsWith("blob:")) URL.revokeObjectURL(patientPhotoSrc.value);
+  patientPhotoSrc.value = "";
 }
 
 async function loadPaciente() {
@@ -2354,17 +2569,27 @@ async function loadPaciente() {
     beneficiariosFicha.value = [];
     return;
   }
+  const fichaSolicitada = asignar.ficha.trim();
+  const codigoSolicitado = String(asignar.codigo || "00").padStart(2, "0");
+  const empresaSolicitada = Number(asignar.empresa || 0);
+  clearPaciente();
+  citasPaciente.value = [];
+  asignarOkFolio.value = "";
   paciente.loading = true;
   error.value = "";
   buscarHint.value = "";
   try {
-    await loadBeneficiariosPorFicha();
+    await loadBeneficiariosPorFicha(codigoSolicitado, empresaSolicitada);
+    if (asignar.ficha.trim() !== fichaSolicitada) return;
+    const codigo = String(asignar.codigo || codigoSolicitado || "00").padStart(2, "0");
+    const empresa = Number(asignar.empresa || empresaSolicitada || 0);
     const data = await post<{ ok: boolean; record: Record<string, unknown> }>("/derech/detail", {
       ...props.session,
-      ficha: asignar.ficha.trim(),
-      codigo: (asignar.codigo || "00").trim(),
-      empresa: asignar.empresa,
+      ficha: fichaSolicitada,
+      codigo,
+      empresa,
     });
+    if (asignar.ficha.trim() !== fichaSolicitada) return;
     const r = data.record || {};
     paciente.nombre = [r.derc_nombre, r.derc_appaterno, r.derc_apmaterno]
       .map((v) => String(v || "").trim())
@@ -2384,13 +2609,15 @@ async function loadPaciente() {
       /VIEGENTE/gi,
       "VIGENTE",
     );
-    paciente.edad = calcEdad(String(r.derd_fecnac || ""));
+    paciente.edad = edadDesdeRegistro(r);
     if (r.ders_empresa != null && r.ders_empresa !== "") {
       asignar.empresa = Number(r.ders_empresa);
     }
+    if (r.derc_codigo != null && String(r.derc_codigo).trim() !== "") {
+      asignar.codigo = String(r.derc_codigo).padStart(2, "0");
+    }
     photoFailed.value = false;
     pacienteBuscado.value = true;
-    asignarOkFolio.value = "";
     await loadCitasPaciente();
   } catch (e) {
     clearPaciente();
@@ -2438,6 +2665,11 @@ function limpiarAsignar() {
   buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
   error.value = "";
   okMsg.value = "";
+}
+
+function onAsignarPacienteClaveChange() {
+  if (!pacienteBuscado.value || !asignar.ficha.trim()) return;
+  void loadPaciente();
 }
 
 function partialClearAsignar() {
@@ -2523,12 +2755,14 @@ async function loadEmpresasCat() {
   }
 }
 
-async function loadBeneficiariosPorFicha() {
+async function loadBeneficiariosPorFicha(preferCodigo?: string, preferEmpresa?: number) {
   const ficha = asignar.ficha.trim();
   if (!ficha) {
     beneficiariosFicha.value = [];
     return;
   }
+  const codigoWanted = String(preferCodigo ?? asignar.codigo ?? "00").padStart(2, "0");
+  const empresaWanted = Number(preferEmpresa ?? asignar.empresa ?? 0);
   try {
     const data = await post<{ rows: Record<string, unknown>[] }>("/derech/list", {
       ...props.session,
@@ -2541,20 +2775,14 @@ async function loadBeneficiariosPorFicha() {
       ders_empresa: String(r.ders_empresa ?? 0),
       nombre_completo: String(r.nombre_completo || "").trim(),
     }));
-    if (beneficiariosFicha.value.length === 1) {
-      asignar.codigo = beneficiariosFicha.value[0].derc_codigo;
-      asignar.empresa = Number(beneficiariosFicha.value[0].ders_empresa);
-    } else if (beneficiariosFicha.value.length > 1) {
-      const hit = beneficiariosFicha.value.find(
-        (b) =>
-          b.derc_codigo === String(asignar.codigo || "00").padStart(2, "0") &&
-          Number(b.ders_empresa) === Number(asignar.empresa),
-      );
-      if (!hit) {
-        asignar.codigo = beneficiariosFicha.value[0].derc_codigo;
-        asignar.empresa = Number(beneficiariosFicha.value[0].ders_empresa);
-      }
-    }
+    if (!beneficiariosFicha.value.length) return;
+    const exact = beneficiariosFicha.value.find(
+      (b) => b.derc_codigo === codigoWanted && Number(b.ders_empresa) === empresaWanted,
+    );
+    const byCodigo = beneficiariosFicha.value.find((b) => b.derc_codigo === codigoWanted);
+    const chosen = exact || byCodigo || beneficiariosFicha.value[0];
+    asignar.codigo = chosen.derc_codigo;
+    asignar.empresa = Number(chosen.ders_empresa);
   } catch {
     beneficiariosFicha.value = [];
   }
@@ -2744,7 +2972,6 @@ function resetConsultaCaptura() {
   consulta.enfermedadPrimeraVez = false;
   consulta.enfermedadSub = false;
   consulta.conn_tipocon = "";
-  tipoconMotivo.value = "";
   dxSlotsVisible.value = 1;
   dxQ.value = "";
   dxPendiente.value = null;
@@ -2790,7 +3017,7 @@ function selectCita(row: Record<string, unknown>) {
   citaCtx.hosi_folio = folio;
   citaCtx.ficha = String(row.derc_ficha || "");
   citaCtx.codigo = String(row.derc_codigo || "00");
-  citaCtx.empresa = Number(row.emp_clave ?? 0);
+  citaCtx.empresa = empresaDeRegistro(row);
   citaCtx.paciente = String(row.paciente || "");
   citaCtx.procedencia = String(row.locfor || "");
   citaCtx.especialidad = String(row.especialidad || "");
@@ -2872,13 +3099,13 @@ async function loadNotaGrabada() {
       } else {
         loadAlergiasListaFromTexto(alergiasTxt);
       }
-    } else if (alergiasTxt && !alergiasTxt.toUpperCase().includes("NO REGISTRADAS")) {
+    } else if (alergiasTxt && !alergiasTxt.toUpperCase().includes("NO REGISTRAD") && !/ALERGIA REFERIDA/i.test(alergiasTxt)) {
       notaCronica.alergias = "positivo";
       loadAlergiasListaFromTexto(alergiasTxt);
     } else {
       notaCronica.alergias = "negativo";
       alergiasLista.value = [];
-      notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
+      notaCronica.alergiasDetalle = "";
     }
     procedimientosSel.value = Array.isArray(r.procedimientos)
       ? (r.procedimientos as { clave?: string; descripcion?: string }[]).map((p) => ({
@@ -2957,7 +3184,7 @@ async function loadConsultaContext(force = false) {
       if (nombrePadron) citaCtx.paciente = nombrePadron;
       citaCtx.procedencia = String(r.ders_locfor || citaCtx.procedencia || "");
       citaCtx.sexo = String(r.derc_sexo || citaCtx.sexo || "");
-      const edadCalc = calcEdad(String(r.derd_fecnac || ""));
+      const edadCalc = edadDesdeRegistro(r);
       if (edadCalc) citaCtx.edad = edadCalc;
       if (r.derd_fecnac) citaCtx.fecnac = String(r.derd_fecnac).slice(0, 10);
       const tipoSangre = String(r.derc_tiposangre || r.tiposangre || r.derc_sangre || "").trim();
@@ -2970,10 +3197,9 @@ async function loadConsultaContext(force = false) {
       }
 
       const preData = pre.data || {};
-      if (preData.edad) {
-        const edadPre = String(preData.edad).replace(/\s*(años|anios|año|anio)\s*$/i, "").trim();
-        if (edadPre) citaCtx.edad = edadPre;
-      }
+      const edadPre = edadInformada(preData.edad);
+      if (edadPre) citaCtx.edad = edadPre;
+      else if (!citaCtx.edad) citaCtx.edad = calcEdad(citaCtx.fecnac);
       if (preData.sexo) citaCtx.sexo = String(preData.sexo).startsWith("MASC") ? "M" : citaCtx.sexo;
 
       await loadNotaGrabada();
@@ -2990,10 +3216,13 @@ async function loadConsultaContext(force = false) {
         notaCronica.diabetes = cr.diabetes ? "positivo" : "negativo";
         notaCronica.hipertension = cr.hipertension ? "positivo" : "negativo";
         notaCronica.obesidad = cr.obesidad ? "positivo" : "negativo";
-        const alergiasTxt = String(preData.alergias || preData.analisis || "");
+        const alergiasTxt = String(preData.alergias || "");
+        const alergiasTxtNorm = alergiasTxt.trim().toUpperCase();
         notaCronica.alergias =
           preData.alergiasRegistradas === true ||
-          (alergiasTxt && !alergiasTxt.toUpperCase().includes("NO REGISTRADAS"))
+          (Boolean(alergiasTxtNorm) &&
+            !alergiasTxtNorm.includes("NO REGISTRAD") &&
+            !alergiasTxtNorm.includes("ALERGIA REFERIDA"))
             ? "positivo"
             : "negativo";
         if (notaCronica.alergias === "positivo") {
@@ -3005,11 +3234,11 @@ async function loadConsultaContext(force = false) {
           alergiaCatalogoSel.value = [];
           syncingAlergiaCatalogoSel.value = false;
           alergiaOtroTexto.value = "";
-          notaCronica.alergiasDetalle = "ALERGIAS NO REGISTRADAS";
+          notaCronica.alergiasDetalle = "";
         }
         antecedentesVisitados.value = true;
-        if (!consulta.analisis.trim() && alergiasTxt) {
-          consulta.analisis = alergiasTxt;
+        if (!consulta.analisis.trim() && alergiasRegistradasTexto()) {
+          consulta.analisis = lineaAlergias();
         }
         syncCronicosEnAnalisis();
       } else {
@@ -3040,6 +3269,7 @@ async function loadConsultaContext(force = false) {
     }
   })();
 
+  loading.value = true;
   consultaContextInflight = run;
   consultaContextInflightKey = key;
   try {
@@ -3048,6 +3278,7 @@ async function loadConsultaContext(force = false) {
     if (consultaContextInflight === run) {
       consultaContextInflight = null;
       consultaContextInflightKey = "";
+      loading.value = false;
     }
   }
 }
@@ -3071,6 +3302,7 @@ function openExpedienteConsulta() {
     empresa: Number(citaCtx.empresa ?? 0),
     hosi_folio: citaCtx.hosi_folio || undefined,
     unitrab: citaCtx.unitrab_nota || props.session.unitrab,
+    origen: "consulta",
   });
 }
 
@@ -3207,6 +3439,8 @@ function usarCitaEnAsignar(row: Record<string, unknown>) {
   asignar.codigo = String(row.derc_codigo || "00");
   if (row.emp_clave != null && row.emp_clave !== "") {
     asignar.empresa = Number(row.emp_clave);
+  } else if (row.ders_empresa != null && row.ders_empresa !== "") {
+    asignar.empresa = Number(row.ders_empresa);
   }
   asignar.folioConsulta = String(row.hosi_folio || "");
   loadPaciente();
@@ -3303,11 +3537,8 @@ async function grabarConsultaConfirmada() {
       diabetes_tipo: notaCronica.diabetesTipo || undefined,
       motivo_cie: consulta.motivoCie10,
       motivo_texto: consulta.motivoConsulta,
-      alergias: notaCronica.alergias === "positivo",
-      alergias_texto:
-        notaCronica.alergias === "positivo"
-          ? alergiasLista.value.join("\n") || notaCronica.alergiasDetalle || "ALERGIA REFERIDA"
-          : "ALERGIAS NO REGISTRADAS",
+      alergias: notaCronica.alergias === "positivo" && Boolean(alergiasRegistradasTexto()),
+      alergias_texto: alergiasRegistradasTexto() || "",
     });
     okMsg.value = res.mensaje;
     consultaOkLocal.value = true;
@@ -3461,14 +3692,20 @@ watch(okMsg, (msg) => {
 });
 
 onMounted(async () => {
-  await load();
-  await loadEmpresasCat();
-  await loadCatalogos();
+  bootLoading.value = true;
+  try {
+    await load();
+    await loadEmpresasCat();
+    await loadCatalogos();
+  } finally {
+    bootLoading.value = false;
+  }
 });
 </script>
 
 <template>
   <div class="siah-atmed-widget space-y-3">
+    <SiahHeartBusy :show="showBusy" label="Cargando datos médicos" />
     <div
       class="siah-clinical-shell grid grid-cols-1 min-h-[32rem]"
       :class="showAsideRail ? 'lg:grid-cols-[240px_minmax(0,1fr)]' : ''"
@@ -3665,7 +3902,7 @@ onMounted(async () => {
                     <td class="siah-col-time">
                       {{ Number(row.conn_horaini) > 0 ? formatHoraCelda(row.conn_horaini) : "—" }}
                     </td>
-                    <td>{{ row.derc_ficha }}</td>
+                    <td>{{ claveFichaPaciente(row.derc_ficha, row.derc_codigo, empresaDeRegistro(row)) }}</td>
                     <td>
                       <span class="siah-patient-link">{{ row.paciente }}</span>
                     </td>
@@ -3772,7 +4009,7 @@ onMounted(async () => {
                   </div>
                   <div>
                     <small>Ficha</small>
-                    <b>{{ selectedAgendaRow.derc_ficha }}</b>
+                    <b>{{ claveFichaPaciente(selectedAgendaRow.derc_ficha, selectedAgendaRow.derc_codigo, empresaDeRegistro(selectedAgendaRow)) }}</b>
                   </div>
                   <div>
                     <small>Cita</small>
@@ -3902,6 +4139,7 @@ onMounted(async () => {
                 <select
                   v-model="asignar.codigo"
                   class="siah-native"
+                  @change="onAsignarPacienteClaveChange"
                   @keydown.enter.prevent="loadPaciente"
                 >
                   <option v-for="c in codigosOptions" :key="c.value" :value="c.value">
@@ -3914,6 +4152,7 @@ onMounted(async () => {
                 <select
                   v-model.number="asignar.empresa"
                   class="siah-native"
+                  @change="onAsignarPacienteClaveChange"
                   @keydown.enter.prevent="loadPaciente"
                 >
                   <option
@@ -3957,19 +4196,28 @@ onMounted(async () => {
                   />
                   <div v-else class="siah-foto siah-foto--placeholder">
                     <span v-if="paciente.loading">…</span>
-                    <span v-else class="px-1 text-center text-[0.6rem] leading-tight">{{ photoError || "SIN FOTO" }}</span>
+                    <span v-else>{{ photoError || "SIN FOTO" }}</span>
                   </div>
                 </div>
                 <div class="siah-paciente-card__body">
-                  <div class="siah-paciente-card__head">
-                    <p class="siah-paciente-card__nombre">{{ paciente.nombre || "—" }}</p>
-                  </div>
+                  <p class="siah-paciente-card__nombre">{{ paciente.nombre || "—" }}</p>
                   <div class="siah-paciente-card__meta">
-                    <span><strong>Edad</strong> {{ paciente.edad || "—" }}</span>
-                    <span><strong>Ficha</strong> {{ asignar.ficha }}-{{ asignar.codigo }}</span>
-                    <span><strong>Departamento</strong> {{ paciente.depto || "—" }}</span>
-                    <span><strong>Unidad de adscripción</strong> {{ [paciente.uma, paciente.umaDescri].filter(Boolean).join(" · ") || "—" }}</span>
-                    <span><strong>Procedencia</strong> {{ paciente.procedencia || "—" }}</span>
+                    <div class="siah-paciente-card__dato">
+                      <small>Edad</small>
+                      <strong>{{ edadLabel(paciente.edad) || "—" }}</strong>
+                    </div>
+                    <div class="siah-paciente-card__dato">
+                      <small>Ficha</small>
+                      <strong>{{ pacienteFichaClave }}</strong>
+                    </div>
+                    <div class="siah-paciente-card__dato siah-paciente-card__dato--wide">
+                      <small>Unidad de adscripción</small>
+                      <strong>{{ [paciente.uma, paciente.umaDescri].filter(Boolean).join(" · ") || "—" }}</strong>
+                    </div>
+                    <div class="siah-paciente-card__dato">
+                      <small>Procedencia</small>
+                      <strong>{{ paciente.procedencia || "—" }}</strong>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4085,6 +4333,10 @@ onMounted(async () => {
                   </strong>
                 </div>
                 <div>
+                  <small>Ficha</small>
+                  <strong>{{ pacienteFichaClave }}</strong>
+                </div>
+                <div>
                   <small>Especialidad</small>
                   <strong>{{ especialidadNombre || "—" }}</strong>
                 </div>
@@ -4147,9 +4399,7 @@ onMounted(async () => {
                 <div>
                   <strong>{{ citaCtx.paciente || "—" }}</strong>
                   <div class="siah-muted">
-                    Ficha <b>{{ citaCtx.ficha || "—" }}</b>
-                    · Código {{ citaCtx.codigo || "—" }}
-                    · Empresa {{ citaCtx.empresa ?? "—" }}
+                    Ficha <b>{{ citaFichaClave }}</b>
                     · {{ edadLabel(citaCtx.edad) || "—" }}
                     · {{ sexoLabel(citaCtx.sexo) || "—" }}
                   </div>
@@ -4213,7 +4463,7 @@ onMounted(async () => {
                     </div>
                     <div>
                       <small>Ficha</small>
-                      <b>{{ citaCtx.ficha || "—" }}</b>
+                      <b>{{ citaFichaClave }}</b>
                     </div>
                     <div>
                       <small>Cita</small>
@@ -4226,14 +4476,6 @@ onMounted(async () => {
                     <div>
                       <small>Término</small>
                       <b>{{ formatHoraCelda(citaCtx.horaTermino) || "Sin finalizar" }}</b>
-                    </div>
-                    <div>
-                      <small>Código</small>
-                      <b>{{ citaCtx.codigo || "—" }}</b>
-                    </div>
-                    <div>
-                      <small>Empresa</small>
-                      <b>{{ citaCtx.empresa ?? "—" }}</b>
                     </div>
                     <div>
                       <small>Procedencia</small>
@@ -4484,15 +4726,6 @@ onMounted(async () => {
                       Nota grabada: los signos vitales quedan en solo lectura.
                     </p>
                     <div class="siah-vital-toolbar">
-                      <button
-                        type="button"
-                        class="siah-proto-btn"
-                        disabled
-                        title="Copiar antecedente no disponible"
-                        @click="copiarAntecedenteDesdeUi"
-                      >
-                        Copiar antecedente
-                      </button>
                       <button
                         type="button"
                         class="siah-proto-btn siah-proto-btn--primary"
@@ -4784,18 +5017,40 @@ onMounted(async () => {
                       <tr>
                         <th>CIE-10</th>
                         <th>Descripción</th>
+                        <th class="siah-dx-tipo">Primera vez</th>
+                        <th class="siah-dx-tipo">Subsecuente</th>
                         <th></th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-if="!diagnosticosTabla.length">
-                        <td colspan="3" class="siah-empty-focus">
+                        <td colspan="5" class="siah-empty-focus">
                           Busque el diagnóstico, selecciónelo y pulse Agregar.
                         </td>
                       </tr>
                       <tr v-for="fila in diagnosticosTabla" :key="fila.slot">
                         <td><b>{{ fila.clave }}</b></td>
                         <td>{{ fila.texto || "—" }}</td>
+                        <td class="siah-dx-tipo">
+                          <input
+                            v-if="fila.slot === 1"
+                            type="checkbox"
+                            :checked="consulta.enfermedadPrimeraVez"
+                            :disabled="notaBloqueada"
+                            aria-label="Primera vez"
+                            @click.prevent="setTipoConsulta(true)"
+                          >
+                        </td>
+                        <td class="siah-dx-tipo">
+                          <input
+                            v-if="fila.slot === 1"
+                            type="checkbox"
+                            :checked="consulta.enfermedadSub"
+                            :disabled="notaBloqueada"
+                            aria-label="Subsecuente"
+                            @click.prevent="setTipoConsulta(false)"
+                          >
+                        </td>
                         <td>
                           <button
                             type="button"
@@ -4810,32 +5065,6 @@ onMounted(async () => {
                       </tr>
                     </tbody>
                   </table>
-                </div>
-                <div class="flex flex-wrap items-end gap-3">
-                  <div class="siah-radio-line">
-                    <b>Enfermedad</b>
-                    <button
-                      type="button"
-                      class="siah-proto-btn"
-                      :class="{ 'siah-proto-btn--active': consulta.enfermedadPrimeraVez }"
-                      :disabled="notaBloqueada || !diagnosticoCapturado"
-                      @click="setTipoConsulta(true)"
-                    >
-                      Primera vez
-                    </button>
-                    <button
-                      type="button"
-                      class="siah-proto-btn"
-                      :class="{ 'siah-proto-btn--active': consulta.enfermedadSub }"
-                      :disabled="notaBloqueada || !diagnosticoCapturado"
-                      @click="setTipoConsulta(false)"
-                    >
-                      Subsecuente
-                    </button>
-                    <span v-if="tipoconMotivo" class="text-[0.65rem] text-[var(--siah-muted)] max-w-xs">
-                      {{ tipoconMotivo }}
-                    </span>
-                  </div>
                 </div>
               </div>
             </AtmedSectionCard>
@@ -5120,38 +5349,171 @@ onMounted(async () => {
       </template>
     </UModal>
 
-    <UModal v-model:open="historialModalOpen" :ui="{ content: 'max-w-2xl w-full' }">
+    <UModal
+      v-model:open="historialModalOpen"
+      :ui="{
+        content:
+          'siah-nm-shell p-0 gap-0 divide-y-0 overflow-hidden w-[min(900px,calc(100vw-24px))] sm:max-w-[min(900px,calc(100vw-24px))] max-h-[calc(100dvh-28px)]',
+      }"
+    >
       <template #content>
-        <div class="space-y-3 p-4">
-          <h3 class="text-sm font-bold uppercase text-highlighted m-0">Nota anterior (solo lectura)</h3>
-          <p class="text-xs text-muted m-0">
-            {{ lineaHistorialMain(historialNota) }}
-          </p>
-          <div class="space-y-2 text-sm max-h-[60vh] overflow-auto">
-            <p class="m-0"><strong>Subjetivo.</strong> {{ historialNota?.sintomas || "—" }}</p>
-            <p class="m-0"><strong>Objetivo.</strong> {{ historialNota?.objetivo || "—" }}</p>
-            <p class="m-0 whitespace-pre-wrap"><strong>Análisis.</strong> {{ historialNota?.analisis || "—" }}</p>
-            <p class="m-0 whitespace-pre-wrap">
-              <strong>Alergias.</strong>
-              {{
-                Array.isArray(historialNota?.alergias_lista) && historialNota.alergias_lista.length
-                  ? historialNota.alergias_lista.join(", ")
-                  : (historialNota?.alergias_texto || "—")
-              }}
-            </p>
-            <p class="m-0 whitespace-pre-wrap"><strong>Plan.</strong> {{ historialNota?.plan || "—" }}</p>
-            <p class="m-0 whitespace-pre-wrap">
-              <strong>Diagnóstico.</strong>
-              {{
-                historialNota?.diagnostico
-                  ? `${historialNota.diai_clacie1 || ""} — ${historialNota.diagnostico}`
-                  : (historialNota?.diai_clacie1 || "—")
-              }}
-            </p>
+        <div v-if="historialVista" class="siah-nm">
+          <header class="siah-nm__header">
+            <div>
+              <div class="siah-nm__title-line">
+                <span class="siah-nm__heading-icon" aria-hidden="true">
+                  <UIcon name="i-lucide-file-text" class="size-4" />
+                </span>
+                <h2 class="siah-nm__title">Nota médica anterior</h2>
+                <span class="siah-nm__readonly">
+                  <UIcon name="i-lucide-lock" class="size-3" />
+                  SOLO LECTURA
+                </span>
+              </div>
+              <div class="siah-nm__meta">
+                <UIcon name="i-lucide-calendar" class="size-3.5" />
+                <time>{{ historialVista.fechaHora }}</time>
+                <span class="siah-nm__bullet">•</span>
+                <span>{{ historialVista.especialidad }}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="siah-nm__close"
+              aria-label="Cerrar nota"
+              @click="historialModalOpen = false"
+            >
+              <UIcon name="i-lucide-x" class="size-4" />
+            </button>
+          </header>
+
+          <div class="siah-nm__scroll" tabindex="0" aria-label="Contenido de la nota médica">
+            <div class="siah-nm__summary">
+              <div class="siah-nm__unit">{{ historialVista.unidad }}</div>
+              <div class="siah-nm__diagnosis">
+                <span v-if="historialVista.cie" class="siah-nm__code">{{ historialVista.cie }}</span>
+                <div>
+                  <small>Diagnóstico</small>
+                  <strong>{{ historialVista.diagnostico || "—" }}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="siah-nm__content">
+              <div class="siah-nm__grid">
+                <div class="siah-nm__clinical">
+                  <section class="siah-nm__section">
+                    <h3><span class="siah-nm__letter" aria-hidden="true">S</span>Subjetivo</h3>
+                    <p>{{ historialVista.sintomas }}</p>
+                  </section>
+                  <section class="siah-nm__section">
+                    <h3><span class="siah-nm__letter" aria-hidden="true">O</span>Objetivo</h3>
+                    <p>{{ historialVista.objetivo }}</p>
+                  </section>
+                  <section class="siah-nm__section">
+                    <h3><span class="siah-nm__letter" aria-hidden="true">A</span>Análisis</h3>
+                    <p class="whitespace-pre-wrap">{{ historialVista.analisis }}</p>
+                  </section>
+                  <section class="siah-nm__section">
+                    <h3>Alergias</h3>
+                    <p>{{ historialVista.alergias }}</p>
+                  </section>
+                  <section class="siah-nm__section">
+                    <h3><span class="siah-nm__letter" aria-hidden="true">P</span>Plan</h3>
+                    <p class="whitespace-pre-wrap">{{ historialVista.plan }}</p>
+                    <p v-if="historialVista.motivo">{{ historialVista.motivo }}</p>
+                    <p v-if="historialVista.signos" class="siah-nm__plain">
+                      Los signos vitales consignados en este apartado se presentan en el panel contiguo.
+                    </p>
+                  </section>
+                </div>
+
+                <aside class="siah-nm__right" aria-labelledby="historialVitalsTitle">
+                  <h3 id="historialVitalsTitle">Signos vitales</h3>
+                  <p>Valores consignados en el plan de esta nota.</p>
+                  <template v-if="historialVista.signos">
+                    <div class="siah-nm__vital-cat">Cardiovascular</div>
+                    <div class="siah-nm__vitals">
+                      <div class="siah-nm__vital">
+                        <small>Pulso</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.pulso }}<span>lpm</span></div>
+                      </div>
+                      <div class="siah-nm__vital">
+                        <small>Tensión arterial</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.tension }}<span>mmHg</span></div>
+                        <span v-if="historialVista.signos.tensionClas" class="siah-nm__note">
+                          ({{ historialVista.signos.tensionClas }})
+                        </span>
+                      </div>
+                    </div>
+                    <div class="siah-nm__vital-cat">Respiratorio</div>
+                    <div class="siah-nm__vitals">
+                      <div class="siah-nm__vital">
+                        <small>Frecuencia respiratoria</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.respiracion }}<span>rpm</span></div>
+                      </div>
+                      <div class="siah-nm__vital">
+                        <small>Saturación O₂</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.saturacion }}<span>%</span></div>
+                      </div>
+                    </div>
+                    <div class="siah-nm__vital-cat">Temperatura</div>
+                    <div class="siah-nm__vitals">
+                      <div class="siah-nm__vital siah-nm__vital--span">
+                        <small>Temperatura</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.temperatura }}<span>°C</span></div>
+                      </div>
+                    </div>
+                    <div class="siah-nm__vital-cat">Antropometría</div>
+                    <div class="siah-nm__vitals">
+                      <div class="siah-nm__vital">
+                        <small>Peso</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.peso }}<span>kg</span></div>
+                      </div>
+                      <div class="siah-nm__vital">
+                        <small>Estatura</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.estatura }}<span>m</span></div>
+                      </div>
+                      <div class="siah-nm__vital">
+                        <small>IMC</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.imc }}<span>kg/m²</span></div>
+                        <span v-if="historialVista.signos.imcClas" class="siah-nm__note">
+                          ({{ historialVista.signos.imcClas }})
+                        </span>
+                      </div>
+                      <div class="siah-nm__vital">
+                        <small>Perímetro abdominal</small>
+                        <div class="siah-nm__value">{{ historialVista.signos.abdominal }}<span>cm</span></div>
+                      </div>
+                    </div>
+                  </template>
+                  <p v-else class="siah-nm__empty-vitals">Sin signos consignados en esta nota.</p>
+                </aside>
+              </div>
+
+              <section
+                v-for="(ad, idx) in historialVista.adendums"
+                :key="`${ad.stamp}-${idx}`"
+                class="siah-nm__addendum"
+              >
+                <div class="siah-nm__addendum-head">
+                  <h3>
+                    <UIcon name="i-lucide-file-plus-2" class="size-3.5" />
+                    Adéndum
+                  </h3>
+                  <time>{{ ad.stamp }}</time>
+                </div>
+                <p>{{ ad.texto }}</p>
+              </section>
+            </div>
           </div>
-          <div class="flex justify-end">
-            <UButton label="Cerrar" color="neutral" variant="outline" size="sm" @click="historialModalOpen = false" />
-          </div>
+
+          <footer class="siah-nm__footer">
+            <span>Consulta de la nota registrada · Solo lectura</span>
+            <button type="button" class="siah-nm__primary" @click="historialModalOpen = false">
+              Cerrar
+            </button>
+          </footer>
         </div>
       </template>
     </UModal>
@@ -5206,9 +5568,7 @@ onMounted(async () => {
       :ultimos-tension-clasificacion="ultimosTensionClasificacion"
       :ultimos-fecha-label="ultimosFechaLabel"
       :read-only="signosCapturaBloqueada"
-      :copy-disabled="true"
       @graba="doSignos"
-      @copiar="copiarAntecedenteDesdeUi"
       @close="closeSignosModal"
     />
 
@@ -5474,47 +5834,91 @@ onMounted(async () => {
 
 .siah-paciente-card {
   display: flex;
-  gap: 1rem;
-  align-items: flex-start;
-  padding: 0.35rem 0;
+  gap: 1.25rem;
+  align-items: stretch;
+  width: 100%;
+  min-height: 7.5rem;
 }
 
 .siah-paciente-card__body {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.siah-paciente-card__head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 0.75rem;
-  margin-bottom: 0.45rem;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.85rem;
 }
 
 .siah-paciente-card__nombre {
   margin: 0;
-  font-size: 1rem;
+  font-size: calc(1.2rem - 1.5pt);
   font-weight: 700;
   color: var(--siah-ink, #172344);
-  line-height: 1.25;
+  line-height: 1.3;
 }
 
 .siah-paciente-card__meta {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-  gap: 0.35rem 0.75rem;
-  font-size: 0.75rem;
-  color: #374151;
+  grid-template-columns: max-content max-content minmax(12rem, 1fr) max-content;
+  column-gap: 2.5rem;
+  row-gap: 0.75rem;
+  width: 100%;
+  align-items: start;
 }
 
-.siah-paciente-card__meta strong {
+.siah-paciente-card__dato small {
   display: block;
-  font-size: 0.62rem;
+  margin-bottom: 0.3rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: #6b7280;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
+}
+
+.siah-paciente-card__dato strong {
+  display: block;
+  font-size: calc(0.98rem - 1.5pt);
+  font-weight: 700;
+  color: var(--siah-ink, #172344);
+  line-height: 1.4;
+}
+
+.siah-paciente-card__dato:not(.siah-paciente-card__dato--wide) strong {
+  white-space: nowrap;
+}
+
+.siah-paciente-card__dato--wide {
+  min-width: 0;
+}
+
+.siah-paciente-card__dato--wide strong {
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 56rem) {
+  .siah-paciente-card__meta {
+    grid-template-columns: max-content max-content;
+    column-gap: 1.75rem;
+  }
+
+  .siah-paciente-card__dato--wide {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 40rem) {
+  .siah-paciente-card {
+    flex-direction: column;
+  }
+
+  .siah-paciente-card__meta {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .siah-paciente-card__dato:not(.siah-paciente-card__dato--wide) strong {
+    white-space: normal;
+  }
 }
 
 .siah-btn {
@@ -5706,22 +6110,23 @@ onMounted(async () => {
 }
 
 .siah-foto {
-  width: 92px;
-  height: 110px;
+  width: 110px;
+  height: 132px;
   object-fit: cover;
-  border: 1px solid #888;
-  background: #ececec;
+  border: 1px solid var(--siah-line, #dfe6ef);
+  border-radius: 7px;
+  background: #f0f5f3;
 }
 
 .siah-foto--placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.55rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  color: #666;
+  color: #6c9180;
   text-align: center;
-  padding: 0.25rem;
+  padding: 0.4rem;
 }
 
 .siah-agenda-fecha {
