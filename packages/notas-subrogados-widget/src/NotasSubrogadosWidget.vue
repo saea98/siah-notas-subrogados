@@ -118,6 +118,7 @@ const asignar = reactive({
 });
 const asignando = ref(false);
 const pacienteBuscado = ref(false);
+let pacienteSearchSeq = 0;
 const citasPaciente = ref<Record<string, unknown>[]>([]);
 const asignarOkFolio = ref("");
 const buscarHint = ref("Ingrese los datos del paciente para buscarlo en el sistema.");
@@ -1324,14 +1325,27 @@ const consultaStatusLine = computed(() => {
   return `${dia.toUpperCase()}, ${d.getDate()} DE ${mes.toUpperCase()} DE ${d.getFullYear()} · ESPERA ${tiempoEsperaProm.value} · CONSULTA ${tiempoConsultaProm.value}`;
 });
 
+function parseFechaNac(fecnac: string): Date | null {
+  const text = fecnac.trim().slice(0, 10);
+  if (!text) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  const dmy = /^(\d{2})[-/](\d{2})[-/](\d{4})$/.exec(text);
+  const y = Number(iso?.[1] ?? dmy?.[3]);
+  const m = Number(iso?.[2] ?? dmy?.[2]);
+  const d = Number(iso?.[3] ?? dmy?.[1]);
+  if (!iso && !dmy) return null;
+  const date = new Date(y, m - 1, d);
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return date;
+}
+
 function calcEdad(fecnac: string): string {
-  if (!fecnac) return "";
-  const d = new Date(fecnac.slice(0, 10));
-  if (Number.isNaN(d.getTime())) return "";
+  const date = parseFechaNac(fecnac);
+  if (!date) return "";
   const today = new Date();
-  let age = today.getFullYear() - d.getFullYear();
-  const m = today.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age -= 1;
+  let age = today.getFullYear() - date.getFullYear();
+  const month = today.getMonth() - date.getMonth();
+  if (month < 0 || (month === 0 && today.getDate() < date.getDate())) age -= 1;
   return age >= 0 ? String(age) : "";
 }
 
@@ -1468,7 +1482,8 @@ function imprimirAgenda() {
           <td>${formatHoraCelda(r.cits_hrllegada) || "—"}</td>
           <td>${r.derc_ficha ?? ""}</td>
           <td>${r.paciente ?? ""}</td>
-          <td>${r.especialidad ?? "—"}</td>
+          <td>${r.motivo_consulta ?? "—"}</td>
+          <td>${r.diagnostico ?? "—"}</td>
         </tr>`,
     )
     .join("");
@@ -1476,7 +1491,7 @@ function imprimirAgenda() {
     <style>body{font-family:sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px}
     th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eee}</style></head>
     <body><h2>Agenda médica · ${fecha.value}</h2>
-    <table><thead><tr><th>No</th><th>Folio</th><th>Cita</th><th>Llegó</th><th>Ficha</th><th>Paciente</th><th>Especialidad</th></tr></thead>
+    <table><thead><tr><th>No</th><th>Folio</th><th>Cita</th><th>Llegó</th><th>Ficha</th><th>Paciente</th><th>Motivo de consulta</th><th>Diagnóstico de consulta</th></tr></thead>
     <tbody>${rowsHtml}</tbody></table></body></html>`);
   win.document.close();
   win.focus();
@@ -1695,6 +1710,34 @@ function clearPaciente() {
   photoFailed.value = false;
 }
 
+function applyPacienteRecord(r: Record<string, unknown>) {
+  paciente.nombre = [r.derc_nombre, r.derc_appaterno, r.derc_apmaterno]
+    .map((v) => String(v || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  paciente.ct = String(r.cens_clave || r.ct_desc || "");
+  paciente.depto = String(r.deps_clave || r.depto_desc || "");
+  paciente.org = String(r.orgs_clave || "");
+  paciente.sx = String(r.derc_sexo || "");
+  paciente.rc = String(r.derc_regcontrac || "");
+  paciente.uma = String(r.unis_unimed || "");
+  paciente.umaDescri = String(r.uma_desc || "");
+  paciente.procedencia = String(r.ders_locfor || "");
+  paciente.vigencia = String(r.derd_vigencia || "").slice(0, 10);
+  paciente.estatusCodigo = String(r.ders_estatus || "").trim();
+  paciente.estatusVigencia = String(r.estatus_desc || r.ders_estatus || "").replace(
+    /VIEGENTE/gi,
+    "VIGENTE",
+  );
+  paciente.edad = calcEdad(String(r.derd_fecnac || ""));
+  if (r.derc_codigo != null && String(r.derc_codigo).trim() !== "") {
+    asignar.codigo = String(r.derc_codigo).padStart(2, "0");
+  }
+  if (r.ders_empresa != null && r.ders_empresa !== "") {
+    asignar.empresa = Number(r.ders_empresa);
+  }
+}
+
 async function loadPaciente() {
   if (!asignar.ficha.trim()) {
     buscarHint.value = "Ingrese los datos del paciente para buscarlo en el sistema.";
@@ -1704,51 +1747,37 @@ async function loadPaciente() {
     beneficiariosFicha.value = [];
     return;
   }
+  const seq = ++pacienteSearchSeq;
+  clearPaciente();
+  pacienteBuscado.value = false;
+  citasPaciente.value = [];
+  beneficiariosFicha.value = [];
   paciente.loading = true;
   error.value = "";
   buscarHint.value = "";
   try {
     await loadBeneficiariosPorFicha();
+    if (seq !== pacienteSearchSeq) return;
     const data = await post<{ ok: boolean; record: Record<string, unknown> }>("/derech/detail", {
       ...props.session,
       ficha: asignar.ficha.trim(),
       codigo: (asignar.codigo || "00").trim(),
       empresa: asignar.empresa,
     });
-    const r = data.record || {};
-    paciente.nombre = [r.derc_nombre, r.derc_appaterno, r.derc_apmaterno]
-      .map((v) => String(v || "").trim())
-      .filter(Boolean)
-      .join(" ");
-    paciente.ct = String(r.cens_clave || r.ct_desc || "");
-    paciente.depto = String(r.deps_clave || r.depto_desc || "");
-    paciente.org = String(r.orgs_clave || "");
-    paciente.sx = String(r.derc_sexo || "");
-    paciente.rc = String(r.derc_regcontrac || "");
-    paciente.uma = String(r.unis_unimed || "");
-    paciente.umaDescri = String(r.uma_desc || "");
-    paciente.procedencia = String(r.ders_locfor || "");
-    paciente.vigencia = String(r.derd_vigencia || "").slice(0, 10);
-    paciente.estatusCodigo = String(r.ders_estatus || "").trim();
-    paciente.estatusVigencia = String(r.estatus_desc || r.ders_estatus || "").replace(
-      /VIEGENTE/gi,
-      "VIGENTE",
-    );
-    paciente.edad = calcEdad(String(r.derd_fecnac || ""));
-    if (r.ders_empresa != null && r.ders_empresa !== "") {
-      asignar.empresa = Number(r.ders_empresa);
-    }
+    if (seq !== pacienteSearchSeq) return;
+    applyPacienteRecord(data.record || {});
     photoFailed.value = false;
     pacienteBuscado.value = true;
     asignarOkFolio.value = "";
     await loadCitasPaciente();
   } catch (e) {
+    if (seq !== pacienteSearchSeq) return;
     clearPaciente();
     pacienteBuscado.value = false;
     citasPaciente.value = [];
     error.value = e instanceof Error ? e.message : "Paciente no encontrado";
   } finally {
-    paciente.loading = false;
+    if (seq === pacienteSearchSeq) paciente.loading = false;
   }
 }
 
@@ -2074,8 +2103,15 @@ function selectCita(row: Record<string, unknown>) {
   citaCtx.esps_espserv = Number(row.esps_espserv || 0);
   citaCtx.unitrab_nota = props.session.unitrab;
   citaCtx.pg_schema = "";
+  citaCtx.edad = "";
+  citaCtx.sexo = "";
+  citaCtx.sangre = "";
+  citaCtx.procedencia = "";
+  citaCtx.fecnac = "";
   if (row.derd_fecnac) {
     citaCtx.fecnac = String(row.derd_fecnac).slice(0, 10);
+    const edad = calcEdad(citaCtx.fecnac);
+    citaCtx.edad = edad ? `${edad} AÑOS` : "";
   }
   const flag = String(row.requiere_signos || "").toUpperCase();
   if (flag === "N" || flag === "S") {
@@ -2140,6 +2176,11 @@ async function loadNotaGrabada() {
     consulta.diai_clacie3 = String(r.diai_clacie3 || "");
     consulta.diai_clacie4 = String(r.diai_clacie4 || "");
     consulta.diai_clacie5 = String(r.diai_clacie5 || "");
+    consulta.diagnosticoTexto = String(r.diagnostico || "");
+    consulta.diagnosticoTexto2 = String(r.diagnostico2 || "");
+    consulta.diagnosticoTexto3 = String(r.diagnostico3 || "");
+    consulta.diagnosticoTexto4 = String(r.diagnostico4 || "");
+    consulta.diagnosticoTexto5 = String(r.diagnostico5 || "");
     if (r.pg_schema) citaCtx.pg_schema = String(r.pg_schema);
     if (r.unitrab != null) citaCtx.unitrab_nota = r.unitrab as string | number;
     const tipocon = String(r.conn_tipocon || "").toUpperCase().slice(0, 1);
@@ -2231,9 +2272,7 @@ async function loadConsultaContext(force = false) {
     if (r.derd_fecnac) citaCtx.fecnac = String(r.derd_fecnac).slice(0, 10);
     const tipoSangre = String(r.derc_tiposangre || r.tiposangre || r.derc_sangre || "").trim();
     const rh = String(r.derc_rh || r.rh || "").trim();
-    if (tipoSangre || rh) {
-      citaCtx.sangre = `${tipoSangre}${rh}`.trim() || "—";
-    }
+    citaCtx.sangre = tipoSangre || rh ? `${tipoSangre}${rh}`.trim() : "";
     if (r.ders_empresa != null && r.ders_empresa !== "") {
       citaCtx.empresa = Number(r.ders_empresa);
     }
